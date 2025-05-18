@@ -12,15 +12,9 @@ A web-based whiteboard that lets distributed teams draw, write, and brainstorm t
 3. [Getting Started](#getting-started)
    - [Prerequisites](#prerequisites)
    - [Installation](#installation)
-   - [Running Locally](#running-locally)
-4. [Usage](#usage)
-5. [Project Structure](#project-structure)
-6. [API Endpoints](#api-endpoints)
-7. [Real-Time Events](#real-time-events)
-8. [Configuration](#configuration)
-9. [Roadmap](#roadmap)
-10. [Contributing](#contributing)
-11. [License](#license)
+4. [Configuration](#configuration)
+5. [Roadmap](#roadmap)
+6. [Contributing](#contributing)
 
 ---
 
@@ -83,3 +77,28 @@ nodemon server.js
 
 
 ```
+
+### Configuration
+
+```bash
+MONGO_URI=your_mongo_connection_string
+
+# Frondend
+
+REACT_APP_API_URL=http://localhost:3000
+```
+
+### Roadmap
+
+v1.0: MVP with freehand drawing, sync, basic auth, exports
+v1.1: Shapes/text, color picker, undo/redo, version history
+v1.2: Presence indicators, chat/comments, role-based permissions
+v2.0: Mobile touch support, embed widget, plugin integrations
+
+### Contributing
+
+Fork the repository
+Create a feature branch (git checkout -b feature/awesome)
+Commit your changes (git commit -m "Add awesome feature")
+Push to branch (git push origin feature/awesome)
+Open a Pull Request
