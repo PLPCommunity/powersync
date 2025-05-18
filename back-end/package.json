@@ -1,0 +1,8 @@
+{
+  "name": "back-end",
+  "version": "1.0.0",
+  "description": "project initialized and pioneered by Evans Mutuku (JSDaddie)",
+  "main": "index.js",
+  "author": "Evans Mutuku",
+  "license": "MIT"
+}
