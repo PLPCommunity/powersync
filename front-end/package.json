@@ -13,6 +13,8 @@
     "@tailwindcss/vite": "^4.1.7",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
+    "silent": "^0.2.3",
+    "socket.io-client": "^4.8.1",
     "tailwindcss": "^4.1.7"
   },
   "devDependencies": {

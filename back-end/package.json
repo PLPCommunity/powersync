@@ -3,6 +3,10 @@
   "version": "1.0.0",
   "description": "project initialized and pioneered by Evans Mutuku (JSDaddie)",
   "main": "index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js"
+  },
   "author": "Evans Mutuku",
   "license": "MIT",
   "dependencies": {
