@@ -38,6 +38,44 @@ router.get('/:id', async (req, res) => {
   }
 });
 
+// Update board basic fields (e.g., name)
+router.put('/:id', async (req, res) => {
+  try {
+    const { name, description } = req.body;
+    const update = {};
+    if (typeof name === 'string') update.name = name.trim() || 'Untitled document';
+    if (typeof description === 'string') update.description = description.trim();
+    const board = await Board.findByIdAndUpdate(req.params.id, update, { new: true });
+    if (!board) return res.status(404).json({ message: 'Board not found' });
+    return res.json(board);
+  } catch (error) {
+    return res.status(500).json({ message: 'Failed to update board', error: error.message });
+  }
+});
+
+// Overwrite shapes array (autosave)
+router.put('/:id/shapes', async (req, res) => {
+  try {
+    const { shapes } = req.body;
+    console.log(`💾 REST autosave shapes: boardId=${req.params.id}, shapeCount=${Array.isArray(shapes) ? shapes.length : 'invalid'}`);
+    if (!Array.isArray(shapes)) return res.status(400).json({ message: 'shapes must be an array' });
+    const board = await Board.findByIdAndUpdate(
+      req.params.id,
+      { $set: { shapes } },
+      { new: true }
+    );
+    if (!board) {
+      console.warn(`❌ Board not found for shapes autosave: ${req.params.id}`);
+      return res.status(404).json({ message: 'Board not found' });
+    }
+    console.log(`✅ REST autosave complete: ${shapes.length} shapes saved`);
+    return res.json({ ok: true });
+  } catch (error) {
+    console.error(`❌ REST autosave failed:`, error.message);
+    return res.status(500).json({ message: 'Failed to save shapes', error: error.message });
+  }
+});
+
 module.exports = router;
 
 

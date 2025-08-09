@@ -20,22 +20,20 @@ const BoardSchema = new mongoose.Schema(
       ref: 'User',
       required: false,
     },
-    // Optional: lightweight persistence of strokes for simple history
-    // For now we keep drawing in-memory via WebSocket; this is reserved for future use
-    strokes: {
-      type: [
-        {
-          points: [{ x: Number, y: Number }],
-          color: { type: String, default: '#000000' },
-          width: { type: Number, default: 2 },
-        },
-      ],
+    // Persisted shapes state for the board (saved in real-time by clients)
+    shapes: {
+      type: [mongoose.Schema.Types.Mixed],
       default: [],
     },
   },
   { timestamps: true }
 );
 
-module.exports = mongoose.models.Board || mongoose.model('Board', BoardSchema);
+// Clear any existing model to avoid conflicts
+if (mongoose.models.Board) {
+  delete mongoose.models.Board;
+}
+
+module.exports = mongoose.model('Board', BoardSchema);
 
 

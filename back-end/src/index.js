@@ -5,6 +5,7 @@ const http      = require('http');
 const mongoose  = require('mongoose');
 const cors      = require('cors');
 const { Server }= require('socket.io');
+const Board = require('./models/Board');
 
 const app  = express();
 const srv  = http.createServer(app);
@@ -41,22 +42,86 @@ io.on('connection', socket => {
   });
 
   // Shape collaboration events
-  socket.on('shape-create', data => {
+  socket.on('shape-create', async data => {
     // data: { boardId, shape }
-    if (!data || !data.boardId || !data.shape) return;
+    console.log('📝 shape-create received:', { boardId: data?.boardId, shapeId: data?.shape?.id, shapeType: data?.shape?.type });
+    if (!data || !data.boardId || !data.shape) {
+      console.warn('❌ Invalid shape-create data:', data);
+      return;
+    }
+    try {
+      const result = await Board.updateOne(
+        { _id: data.boardId },
+        { $push: { shapes: data.shape } }
+      );
+      console.log('✅ shape-create persisted:', { matchedCount: result.matchedCount, modifiedCount: result.modifiedCount });
+    } catch (e) {
+      console.error('❌ Failed to persist shape-create:', e.message);
+    }
     io.to(data.boardId).emit('shape-created', { shape: data.shape });
   });
 
-  socket.on('shape-update', data => {
+  socket.on('shape-update', async data => {
     // data: { boardId, shapeId, props }
-    if (!data || !data.boardId || !data.shapeId) return;
+    console.log('✏️ shape-update received:', { boardId: data?.boardId, shapeId: data?.shapeId, propsKeys: Object.keys(data?.props || {}) });
+    if (!data || !data.boardId || !data.shapeId) {
+      console.warn('❌ Invalid shape-update data:', data);
+      return;
+    }
+    try {
+      const props = data.props || {};
+      const set = {};
+      Object.keys(props).forEach(key => {
+        set[`shapes.$[elem].${key}`] = props[key];
+      });
+      if (Object.keys(set).length) {
+        const result = await Board.updateOne(
+          { _id: data.boardId },
+          { $set: set },
+          { arrayFilters: [{ 'elem.id': data.shapeId }] }
+        );
+        console.log('✅ shape-update persisted:', { matchedCount: result.matchedCount, modifiedCount: result.modifiedCount });
+      } else {
+        console.log('⚠️ No props to update');
+      }
+    } catch (e) {
+      console.error('❌ Failed to persist shape-update:', e.message);
+    }
     io.to(data.boardId).emit('shape-updated', { shapeId: data.shapeId, props: data.props || {} });
   });
 
-  socket.on('shape-delete', data => {
+  socket.on('shape-delete', async data => {
     // data: { boardId, shapeId }
-    if (!data || !data.boardId || !data.shapeId) return;
+    console.log('🗑️ shape-delete received:', { boardId: data?.boardId, shapeId: data?.shapeId });
+    if (!data || !data.boardId || !data.shapeId) {
+      console.warn('❌ Invalid shape-delete data:', data);
+      return;
+    }
+    try {
+      const result = await Board.updateOne(
+        { _id: data.boardId },
+        { $pull: { shapes: { id: data.shapeId } } }
+      );
+      console.log('✅ shape-delete persisted:', { matchedCount: result.matchedCount, modifiedCount: result.modifiedCount });
+    } catch (e) {
+      console.error('❌ Failed to persist shape-delete:', e.message);
+    }
     io.to(data.boardId).emit('shape-deleted', { shapeId: data.shapeId });
+  });
+
+  // Optional: board name updates via socket for real-time rename
+  socket.on('board-rename', async data => {
+    // data: { boardId, name }
+    if (!data || !data.boardId || typeof data.name !== 'string') return;
+    try {
+      await Board.updateOne(
+        { _id: data.boardId },
+        { $set: { name: data.name.trim() || 'Untitled document' } }
+      );
+      io.to(data.boardId).emit('board-renamed', { name: data.name.trim() || 'Untitled document' });
+    } catch (e) {
+      console.error('Failed to persist board-rename:', e.message);
+    }
   });
 
   socket.on('disconnect', () => {
