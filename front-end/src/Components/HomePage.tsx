@@ -9,8 +9,9 @@ import {
   Zap,
   Users,
 } from "lucide-react";
+import { Link } from "react-router-dom";
 
-export function LandingPage() {
+export function HomePage() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-indigo-50/60 via-white to-white text-slate-800">
       {/* Decorative background blob */}
@@ -75,13 +76,12 @@ export function LandingPage() {
             Get Started Free
             <ArrowRight className="h-4 w-4" />
           </a>
-          <a
-            href="#demo"
+          <Link to="/boards"
             className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-6 py-3 text-sm font-semibold text-slate-800 shadow-sm transition hover:bg-slate-50"
           >
             <PlayCircle className="h-5 w-5" />
-            Watch Demo
-          </a>
+           My Boards
+          </Link>
         </div>
       </section>
 

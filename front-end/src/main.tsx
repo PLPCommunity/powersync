@@ -1,16 +1,14 @@
-import { StrictMode } from 'react';
+import React from "react";
 import { createRoot } from 'react-dom/client';
-import { createBrowserRouter, RouterProvider } from 'react-router-dom';
 import App from './App.tsx';
-import { BoardCanvas } from './routes/BoardCanvas.tsx';
+import { BrowserRouter } from "react-router-dom";
 
-const router = createBrowserRouter([
-  { path: '/', element: <App /> },
-  { path: '/boards/:id', element: <BoardCanvas /> },
-]);
+
 
 createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <RouterProvider router={router} />
-  </StrictMode>
+  <React.StrictMode>
+     <BrowserRouter>
+     <App/>
+     </BrowserRouter>
+  </React.StrictMode>
 );
