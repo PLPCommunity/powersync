@@ -126,7 +126,7 @@ export default function AllBoards() {
           <button
             onClick={createBoardAndOpen}
             disabled={isCreating}
-            className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-60"
+            className="inline-flex items-center gap-2 rounded-xl bg-purple-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer"
           >
             <Plus className="h-4 w-4" />
             {isCreating ? "Creating…" : "New Board"}
@@ -218,6 +218,11 @@ function BoardCard({ board, onOpen, onOpenNewTab, onRename, onDuplicate, onDelet
           <h3 className="truncate text-base font-semibold text-slate-900">
             {board.name || "Untitled document"}
           </h3>
+          {board.description ? (
+              <p className="mt-1 line-clamp-2 text-sm text-slate-600">{board.description}</p>
+            ) : (
+              <p className="mt-1 text-sm text-slate-400">—</p>
+            )}
         </div>
   
         {/* Keep clicks here from opening the card */}
@@ -225,7 +230,7 @@ function BoardCard({ board, onOpen, onOpenNewTab, onRename, onDuplicate, onDelet
           <button
             aria-label="delete board"
             onClick={onDelete}
-            className="rounded-lg p-1.5 text-slate-500 hover:bg-red-50 hover:text-red-600"
+            className="rounded-lg p-1.5 text-slate-500 hover:bg-red-50 hover:text-red-600 cursor-pointer"
             title="Delete"
           >
             <Trash2 className="h-5 w-5" />
@@ -234,7 +239,7 @@ function BoardCard({ board, onOpen, onOpenNewTab, onRename, onDuplicate, onDelet
           <button
             aria-label="board menu"
             onClick={() => setOpenMenuId(openMenuId === board._id ? null : board._id)}
-            className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+            className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-700  cursor-pointer"
             title="More"
           >
             <MoreVertical className="h-5 w-5" />
@@ -257,7 +262,7 @@ function BoardCard({ board, onOpen, onOpenNewTab, onRename, onDuplicate, onDelet
   
       <div className="mt-3 flex items-center gap-2 text-xs text-slate-500">
         <Calendar className="h-3.5 w-3.5" />
-        <span>{/* format your date here */}</span>
+        <span>{(board.updatedAt || board.createdAt)}</span>
       </div>
     </div>
   </div>
@@ -274,4 +279,3 @@ function MenuItem({ icon, label, onClick, danger }: any) {
 }
 function SkeletonGrid() { return null as any; } 
 function EmptyState({ onCreate }: { onCreate: () => void }) {  return null as any; }
-function gradientFromId(id: string): [string, string] {return ["#fff","#fff"]; }
