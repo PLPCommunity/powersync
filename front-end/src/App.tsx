@@ -52,7 +52,7 @@ function App() {
               <div style={{ fontWeight: 600 }}>{b.name || 'Untitled document'}</div>
               {b.description && <div style={{ opacity: 0.75, fontSize: 12 }}>{b.description}</div>}
             </div>
-            <button onClick={() => navigate(`/boards/${b._id}`)}>Open</button>
+            <button className='' onClick={() => navigate(`/boards/${b._id}`)}>Open</button>
           </li>
         ))}
       </ul>
