@@ -227,6 +227,6 @@ function MenuItem({ icon, label, onClick, danger }: any) {
     </button>
   );
 }
-function SkeletonGrid() { /* ...same as before... */ return null as any; } // keep your existing one
+function SkeletonGrid() { return null as any; } 
 function EmptyState({ onCreate }: { onCreate: () => void }) {  return null as any; }
-function gradientFromId(id: string): [string, string] { /* ...same as before... */ return ["#fff","#fff"]; }
+function gradientFromId(id: string): [string, string] {return ["#fff","#fff"]; }
