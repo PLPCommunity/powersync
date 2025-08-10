@@ -76,6 +76,26 @@ router.put('/:id/shapes', async (req, res) => {
   }
 });
 
+router.delete('/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!mongoose.isValidObjectId(id)) {
+      return res.status(400).json({ message: 'Invalid board id' });
+    }
+
+    const deleted = await Board.findByIdAndDelete(id);
+    if (!deleted) {
+      return res.status(404).json({ message: 'Board not found' });
+    }
+
+    return res.status(200).json({ ok: true, deletedId: id });
+  } catch (err) {
+    console.error('DELETE /api/boards/:id failed:', err);   // ✅ visible in server logs
+    return res.status(500).json({ message: 'Failed to delete board', error: err.message });
+  }
+});
+
 module.exports = router;
 
 

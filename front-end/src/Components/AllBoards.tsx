@@ -94,42 +94,23 @@ export default function AllBoards() {
     const ok = confirm("Delete this board? This cannot be undone.");
     if (!ok) return;
   
-    const prev = boards; // snapshot for optimistic revert
-    // Optimistic remove from UI
-    setBoards(p => p.filter(b => b._id !== id));
+    const prev = boards;
+    setBoards(p => p.filter(b => b._id !== id)); // optimistic
   
     try {
-      const res = await fetch(
-        `${API_BASE}/api/boards/${encodeURIComponent(id)}`,
-        { method: "DELETE" }
-      );
+      const res = await fetch(`${API_BASE}/api/boards/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      const payload = (res.headers.get('content-type') || '').includes('application/json') ? await res.json().catch(() => null) : null;
   
-      // If server returns a body, try to read it once
-      let payload: any = null;
-      const ct = res.headers.get("content-type") || "";
-      if (ct.includes("application/json")) {
-        try { payload = await res.json(); } catch {}
+      if (!res.ok) {
+        setBoards(prev); // revert for 5xx/other errors
+        alert(payload?.message || `Failed to delete (HTTP ${res.status})`);
       }
-  
-    //   if (!res.ok) {
-    //     if (res.status === 404) {
-    //       // Board is already gone on the server — keep it removed locally.
-    //       console.warn("Board not found on server; keeping UI in sync.");
-    //       return;
-    //     }
-    //     // Other error: revert UI and surface message
-    //     setBoards(prev);
-    //     throw new Error(payload?.message || `Failed to delete (HTTP ${res.status})`);
-    //   }
-  
-      // Success: optionally close any menus, etc.
-      // setOpenMenuId(null);
-    } catch (err: any) {
-      // Network/parse error: revert UI and notify
+    } catch (e: any) {
       setBoards(prev);
-      alert(err?.message || "Failed to delete board");
+      alert(e?.message || 'Failed to delete board');
     }
   }
+  
   
 
   return (
@@ -247,6 +228,5 @@ function MenuItem({ icon, label, onClick, danger }: any) {
   );
 }
 function SkeletonGrid() { /* ...same as before... */ return null as any; } // keep your existing one
-function EmptyState({ onCreate }: { onCreate: () => void }) { /* ...same as before... */ return null as any; }
-function formatDate(iso?: string) { /* ...same as before... */ return ""; }
+function EmptyState({ onCreate }: { onCreate: () => void }) {  return null as any; }
 function gradientFromId(id: string): [string, string] { /* ...same as before... */ return ["#fff","#fff"]; }

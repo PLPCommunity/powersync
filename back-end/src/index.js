@@ -124,10 +124,14 @@ io.on('connection', socket => {
     }
   });
 
+
   socket.on('disconnect', () => {
     console.log(`🔴 User disconnected: ${socket.id}`);
   });
 });
+
+
+
 
 // Start server
 const PORT = process.env.PORT || 5000;
