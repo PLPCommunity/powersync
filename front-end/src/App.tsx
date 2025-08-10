@@ -17,11 +17,12 @@ export default function App() {
         <Route
           path="/board/:id"
           element={
-            <Suspense fallback={<div className="p-6 text-slate-600">Loading board…</div>}>
+            // <Suspense fallback={<div className="p-6 text-slate-600">Loading board…</div>}>
+            // </Suspense>
               <BoardCanvas />
-            </Suspense>
           }
         />
+        {/* <Route path="/boards/:id" element={<Navigate to="/board/:id" replace />} /> */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
   );
