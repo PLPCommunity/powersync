@@ -177,46 +177,91 @@ export default function AllBoards() {
 /* ---- subcomponents (unchanged visually) ---- */
 
 function BoardCard({ board, onOpen, onOpenNewTab, onRename, onDuplicate, onDelete, openMenuId, setOpenMenuId }: any) {
-  const gradient = gradientFromId(board._id);
+  const gradient = useMemo(() => gradientFromId(board._id), [board._id]);
+  function gradientFromId(id: string): [string, string] {
+    let hash = 0;
+    for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) | 0;
+  
+    const hue1 = (hash >>> 0) % 360;
+    const hue2 = (hue1 + 30 + ((hash >>> 8) % 60)) % 360;
+  
+    // Pastel-ish: high saturation, high lightness
+    const c1 = `hsl(${hue1}, 92%, 88%)`;
+    const c2 = `hsl(${hue2}, 92%, 80%)`;
+    return [c1, c2];
+  }
+  
+
   return (
-    <div onClick={onOpen} className="group cursor-pointer overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
-      <div className="relative h-28 w-full"
-        style={{ background: `linear-gradient(135deg, ${gradient[0]}, ${gradient[1]})` }}>
-        <div className="absolute inset-0 grid place-items-center text-slate-600/70">
-          <div className="grid h-10 w-10 place-items-center rounded-xl bg-white/70 shadow-sm backdrop-blur">
-            <FileText className="h-5 w-5" />
-          </div>
-        </div>
-      </div>
-      <div className="relative p-4">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h3 className="truncate text-base font-semibold text-slate-900">{board.name || "Untitled document"}</h3>
-          </div>
-          <div className="relative flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-            <button aria-label="delete board" onClick={onDelete} className="rounded-lg p-1.5 text-slate-500 hover:bg-red-50 hover:text-red-600" title="Delete">
-              <Trash2 className="h-5 w-5" />
-            </button>
-            <button aria-label="board menu" onClick={() => setOpenMenuId(openMenuId === board._id ? null : board._id)} className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-700" title="More">
-              <MoreVertical className="h-5 w-5" />
-            </button>
-            {openMenuId === board._id && (
-              <div className=" right-0 top-9 z-20 mt-1 w-44 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 text-sm shadow-lg">
-                <MenuItem icon={<ExternalLink className="h-4 w-4" />} label="Open in new tab" onClick={onOpenNewTab} />
-                <MenuItem icon={<Edit3 className="h-4 w-4" />} label="Rename" onClick={onRename} />
-                <MenuItem icon={<Copy className="h-4 w-4" />} label="Duplicate" onClick={onDuplicate} />
-                <div className="my-1 border-t border-slate-200" />
-                <MenuItem icon={<Trash2 className="h-4 w-4" />} label="Delete" danger onClick={onDelete} />
-              </div>
-            )}
-          </div>
-        </div>
-        <div className="mt-3 flex items-center gap-2 text-xs text-slate-500">
-          <Calendar className="h-3.5 w-3.5" />
-          <span>{board.updatedAt}</span>
+    <div
+    onClick={onOpen}
+    // remove overflow-hidden so the menu isn't clipped; bump z-index when menu is open
+    className={`group relative cursor-pointer rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${
+      openMenuId === board._id ? "z-50" : ""
+    }`}
+  >
+    {/* Preview header with proper gradient + rounded top */}
+    <div
+      className="relative h-28 w-full rounded-t-2xl"
+      style={{ background: `linear-gradient(135deg, ${gradient[0]}, ${gradient[1]})` }}
+    >
+      <div className="absolute inset-0 grid place-items-center text-slate-600/70">
+        <div className="grid h-10 w-10 place-items-center rounded-xl bg-white/70 shadow-sm backdrop-blur">
+          <FileText className="h-5 w-5" />
         </div>
       </div>
     </div>
+  
+    <div className="relative p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h3 className="truncate text-base font-semibold text-slate-900">
+            {board.name || "Untitled document"}
+          </h3>
+        </div>
+  
+        {/* Keep clicks here from opening the card */}
+        <div className="relative flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+          <button
+            aria-label="delete board"
+            onClick={onDelete}
+            className="rounded-lg p-1.5 text-slate-500 hover:bg-red-50 hover:text-red-600"
+            title="Delete"
+          >
+            <Trash2 className="h-5 w-5" />
+          </button>
+  
+          <button
+            aria-label="board menu"
+            onClick={() => setOpenMenuId(openMenuId === board._id ? null : board._id)}
+            className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+            title="More"
+          >
+            <MoreVertical className="h-5 w-5" />
+          </button>
+  
+          {/* Dropdown */}
+          {openMenuId === board._id && (
+            <div
+              className="absolute right-0 top-9 z-50 mt-1 w-48 overflow-hidden rounded-xl border border-slate-200 bg-white/95 py-1 text-sm shadow-2xl backdrop-blur-md"
+            >
+              <MenuItem icon={<ExternalLink className="h-4 w-4" />} label="Open in new tab" onClick={onOpenNewTab} />
+              <MenuItem icon={<Edit3 className="h-4 w-4" />} label="Rename" onClick={onRename} />
+              <MenuItem icon={<Copy className="h-4 w-4" />} label="Duplicate" onClick={onDuplicate} />
+              <div className="my-1 border-t border-slate-200" />
+              <MenuItem icon={<Trash2 className="h-4 w-4" />} label="Delete" danger onClick={onDelete} />
+            </div>
+          )}
+        </div>
+      </div>
+  
+      <div className="mt-3 flex items-center gap-2 text-xs text-slate-500">
+        <Calendar className="h-3.5 w-3.5" />
+        <span>{/* format your date here */}</span>
+      </div>
+    </div>
+  </div>
+  
   );
 }
 
