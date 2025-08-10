@@ -1,7 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+// src/components/BoardCanvas.tsx
+import React, { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { io, Socket } from "socket.io-client";
 
+/** -------------------- Types -------------------- */
 type ShapeType =
   | "rect"
   | "ellipse"
@@ -10,7 +12,9 @@ type ShapeType =
   | "triangle"
   | "line"
   | "arrow"
-  | "text";
+  | "text"
+  | "freehand";
+type Tool = "select" | ShapeType;
 
 type RectLike = {
   id: string;
@@ -43,26 +47,54 @@ type TextShape = RectLike & {
   color: string;
 };
 
-type Shape = RectLike | LineLike | TextShape;
-type Tool = "select" | ShapeType;
+type Freehand = {
+  id: string;
+  type: "freehand";
+  points: { x: number; y: number }[];
+  stroke: string;
+  strokeWidth: number;
+  bbox: { x: number; y: number; w: number; h: number };
+};
 
-const API_BASE =
-  (import.meta as any).env?.VITE_API_BASE || "http://localhost:5000";
+type Shape = RectLike | LineLike | TextShape | Freehand;
+
+/** -------------------- Config / Utils -------------------- */
+const API_BASE = (import.meta as any).env?.VITE_API_BASE ?? "http://localhost:5000";
+const GRID_SIZE = 24; // world units
+const GRID_BG = "#fbfbfd"; // soft background similar to your screenshot
+const GRID_LINE = "#eef1f5"; // tiny squares color
+const GRID_BOLD = "#e5e9f0"; // every 5th line
 
 function generateId(): string {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
-
 function measureText(text: string, fontSize: number, fontFamily: string) {
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d")!;
   ctx.font = `${fontSize}px ${fontFamily}`;
-  const metrics = ctx.measureText(text || "");
-  const width = Math.ceil(metrics.width) + 12;
+  const m = ctx.measureText(text || "");
+  const width = Math.ceil(m.width) + 12;
   const height = Math.ceil(fontSize * 1.4) + 8;
   return { width, height };
 }
+function isRectLike(s: Shape): s is RectLike {
+  return (
+    s.type === "rect" ||
+    s.type === "ellipse" ||
+    s.type === "diamond" ||
+    s.type === "circle" ||
+    s.type === "triangle" ||
+    s.type === "text"
+  );
+}
+function isLineLike(s: Shape): s is LineLike {
+  return s.type === "line" || s.type === "arrow";
+}
+function isFreehand(s: Shape): s is Freehand {
+  return s.type === "freehand";
+}
 
+/** -------------------- Component -------------------- */
 export function BoardCanvas() {
   const params = useParams();
   const boardId = params.id!;
@@ -77,7 +109,7 @@ export function BoardCanvas() {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const socketRef = useRef<Socket | null>(null);
 
-  // interaction state
+  // Interaction refs
   const isPointerDownRef = useRef(false);
   const dragStartRef = useRef<{ x: number; y: number } | null>(null);
   const draftShapeRef = useRef<Shape | null>(null);
@@ -87,29 +119,49 @@ export function BoardCanvas() {
   const draggedShapeRef = useRef<Shape | null>(null);
   const animationFrameRef = useRef<number | null>(null);
 
-  // text editor overlay
+  // Camera (for infinite canvas)
+  const cameraRef = useRef<{ tx: number; ty: number; scale: number }>({ tx: 0, ty: 0, scale: 1 });
+  const [viewVersion, setViewVersion] = useState(0); // triggers React rerender for overlay on pan/zoom
+
+  // Text editor overlay
   const [textEditor, setTextEditor] = useState<{
     visible: boolean;
-    x: number;
+    x: number; // world coords
     y: number;
     value: string;
     shapeId: string | null;
   }>({ visible: false, x: 0, y: 0, value: "", shapeId: null });
 
-  // init socket + fetch board
+  // Clipboard + mirrors for stable keyboard handlers
+  const clipboardRef = useRef<Shape | null>(null);
+  const shapesRef = useRef<Shape[]>([]);
+  const selectedIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    shapesRef.current = shapes;
+  }, [shapes]);
+  useEffect(() => {
+    selectedIdRef.current = selectedId;
+  }, [selectedId]);
+
+  /** -------------------- Init socket + fetch board -------------------- */
   useEffect(() => {
     socketRef.current = io(API_BASE, { transports: ["websocket"] });
     const abort = new AbortController();
+
     (async () => {
-      const res = await fetch(`${API_BASE}/api/boards/${boardId}`, {
-        signal: abort.signal,
-      });
-      if (!res.ok) return;
-      const data = await res.json();
-      setBoardName(data.name || "Untitled document");
-      if (Array.isArray(data.shapes)) setShapes(data.shapes);
-      socketRef.current?.emit("join-board", { boardId });
+      try {
+        const res = await fetch(`${API_BASE}/api/boards/${boardId}`, { signal: abort.signal });
+        if (!res.ok) return;
+        const data = await res.json();
+        setBoardName(data.name || "Untitled document");
+        if (Array.isArray(data.shapes)) setShapes(data.shapes);
+        socketRef.current?.emit("join-board", { boardId });
+      } catch {
+        /* ignore */
+      }
     })();
+
     return () => {
       abort.abort();
       socketRef.current?.disconnect();
@@ -117,41 +169,26 @@ export function BoardCanvas() {
     };
   }, [boardId]);
 
-  // wire socket shape events
+  /** -------------------- Socket shape events -------------------- */
   useEffect(() => {
     const onCreated = (payload: { shape: Shape }) => {
-      // Don't update if we're currently dragging this shape
-      if (
-        isDraggingRef.current &&
-        draggedShapeRef.current?.id === payload.shape.id
-      )
-        return;
-      setShapes((prev) => [
-        ...prev.filter((s) => s.id !== payload.shape.id),
-        payload.shape,
-      ]);
+      if (isDraggingRef.current && draggedShapeRef.current?.id === payload.shape.id) return;
+      setShapes((prev) => [...prev.filter((s) => s.id !== payload.shape.id), payload.shape]);
     };
     const onUpdated = (payload: { shapeId: string; props: Partial<Shape> }) => {
-      // Don't update if we're currently dragging this shape
-      if (
-        isDraggingRef.current &&
-        draggedShapeRef.current?.id === payload.shapeId
-      )
-        return;
+      if (isDraggingRef.current && draggedShapeRef.current?.id === payload.shapeId) return;
       setShapes((prev) =>
-        prev.map((s) =>
-          s.id === payload.shapeId
-            ? ({ ...s, ...(payload.props as any) } as Shape)
-            : s
-        )
+        prev.map((s) => (s.id === payload.shapeId ? ({ ...s, ...(payload.props as any) } as Shape) : s))
       );
     };
     const onDeleted = (payload: { shapeId: string }) => {
       setShapes((prev) => prev.filter((s) => s.id !== payload.shapeId));
     };
+
     socketRef.current?.on("shape-created", onCreated);
     socketRef.current?.on("shape-updated", onUpdated);
     socketRef.current?.on("shape-deleted", onDeleted);
+
     return () => {
       socketRef.current?.off("shape-created", onCreated);
       socketRef.current?.off("shape-updated", onUpdated);
@@ -159,7 +196,7 @@ export function BoardCanvas() {
     };
   }, []);
 
-  // autosave shapes (debounced)
+  /** -------------------- Autosave -------------------- */
   useEffect(() => {
     const t = setTimeout(() => {
       fetch(`${API_BASE}/api/boards/${boardId}/shapes`, {
@@ -171,7 +208,6 @@ export function BoardCanvas() {
     return () => clearTimeout(t);
   }, [shapes, boardId]);
 
-  // autosave name (debounced)
   useEffect(() => {
     const t = setTimeout(() => {
       fetch(`${API_BASE}/api/boards/${boardId}`, {
@@ -183,12 +219,11 @@ export function BoardCanvas() {
     return () => clearTimeout(t);
   }, [boardName, boardId]);
 
-  // render canvas
+  /** -------------------- Render -------------------- */
   useEffect(() => {
-    if (animationFrameRef.current)
-      cancelAnimationFrame(animationFrameRef.current);
+    if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
     animationFrameRef.current = requestAnimationFrame(() => renderCanvas());
-  }, [shapes, selectedId, tool]);
+  }, [shapes, selectedId, tool, viewVersion]);
 
   function renderCanvas() {
     const canvas = canvasRef.current;
@@ -196,22 +231,32 @@ export function BoardCanvas() {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     const { width, height } = canvas;
-    ctx.clearRect(0, 0, width, height);
-    ctx.fillStyle = "#ffffff";
+    const cam = cameraRef.current;
+    // Reset transform to draw background & grid in screen space
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+
+    // Background
+    ctx.fillStyle = GRID_BG;
     ctx.fillRect(0, 0, width, height);
 
-    // Render all shapes, but use draggedShapeRef for the currently dragged shape
+    // Grid (world-aware)
+    drawGrid(ctx, width, height, cam);
+
+    // Apply camera transform for shapes
+    ctx.setTransform(cam.scale, 0, 0, cam.scale, cam.tx, cam.ty);
+
+    // Shapes
     for (const shape of shapes) {
       if (isDraggingRef.current && draggedShapeRef.current?.id === shape.id) {
-        drawShape(ctx, draggedShapeRef.current);
-        if (selectedId === shape.id)
-          drawSelection(ctx, draggedShapeRef.current);
+        drawShape(ctx, draggedShapeRef.current!);
+        if (selectedId === shape.id) drawSelection(ctx, draggedShapeRef.current!);
       } else {
         drawShape(ctx, shape);
         if (selectedId === shape.id) drawSelection(ctx, shape);
       }
     }
 
+    // Draft
     if (draftShapeRef.current) {
       ctx.save();
       ctx.globalAlpha = 0.7;
@@ -220,9 +265,66 @@ export function BoardCanvas() {
     }
   }
 
+  function drawGrid(ctx: CanvasRenderingContext2D, w: number, h: number, cam: { tx: number; ty: number; scale: number }) {
+    const s = cam.scale;
+    const step = GRID_SIZE * s;
+
+    // visible world bounds
+    const leftW = (-cam.tx) / s;
+    const topW = (-cam.ty) / s;
+    const rightW = leftW + w / s;
+    const bottomW = topW + h / s;
+
+    const xStart = Math.floor(leftW / GRID_SIZE) * GRID_SIZE;
+    const xEnd = Math.ceil(rightW / GRID_SIZE) * GRID_SIZE;
+    const yStart = Math.floor(topW / GRID_SIZE) * GRID_SIZE;
+    const yEnd = Math.ceil(bottomW / GRID_SIZE) * GRID_SIZE;
+
+    ctx.beginPath();
+    for (let x = xStart; x <= xEnd; x += GRID_SIZE) {
+      const sx = x * s + cam.tx;
+      ctx.moveTo(sx + 0.5, 0);
+      ctx.lineTo(sx + 0.5, h);
+    }
+    for (let y = yStart; y <= yEnd; y += GRID_SIZE) {
+      const sy = y * s + cam.ty;
+      ctx.moveTo(0, sy + 0.5);
+      ctx.lineTo(w, sy + 0.5);
+    }
+    ctx.strokeStyle = GRID_LINE;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // every 5th line slightly bolder
+    ctx.beginPath();
+    for (let x = xStart; x <= xEnd; x += GRID_SIZE * 5) {
+      const sx = x * s + cam.tx;
+      ctx.moveTo(sx + 0.5, 0);
+      ctx.lineTo(sx + 0.5, h);
+    }
+    for (let y = yStart; y <= yEnd; y += GRID_SIZE * 5) {
+      const sy = y * s + cam.ty;
+      ctx.moveTo(0, sy + 0.5);
+      ctx.lineTo(w, sy + 0.5);
+    }
+    ctx.strokeStyle = GRID_BOLD;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+
   function drawShape(ctx: CanvasRenderingContext2D, s: Shape) {
     ctx.lineWidth = (s as any).strokeWidth || 2;
     ctx.strokeStyle = (s as any).stroke || "#111111";
+
+    if (isFreehand(s)) {
+      ctx.beginPath();
+      if (!s.points.length) return;
+      ctx.moveTo(s.points[0].x, s.points[0].y);
+      for (let i = 1; i < s.points.length; i++) ctx.lineTo(s.points[i].x, s.points[i].y);
+      ctx.stroke();
+      return;
+    }
+
     if (isRectLike(s)) {
       if (s.type === "rect") {
         if (s.fill) {
@@ -234,10 +336,7 @@ export function BoardCanvas() {
       }
       if (s.type === "ellipse" || s.type === "circle") {
         ctx.beginPath();
-        const rx =
-          s.type === "circle"
-            ? Math.max(Math.abs(s.w / 2), Math.abs(s.h / 2))
-            : Math.abs(s.w / 2);
+        const rx = s.type === "circle" ? Math.max(Math.abs(s.w / 2), Math.abs(s.h / 2)) : Math.abs(s.w / 2);
         const ry = s.type === "circle" ? rx : Math.abs(s.h / 2);
         ctx.ellipse(s.x + s.w / 2, s.y + s.h / 2, rx, ry, 0, 0, Math.PI * 2);
         if (s.fill) {
@@ -248,8 +347,8 @@ export function BoardCanvas() {
         return;
       }
       if (s.type === "triangle") {
-        const x2 = s.x + s.w,
-          y2 = s.y + s.h;
+        const x2 = s.x + s.w;
+        const y2 = s.y + s.h;
         ctx.beginPath();
         ctx.moveTo(s.x + s.w / 2, s.y);
         ctx.lineTo(s.x, y2);
@@ -292,12 +391,14 @@ export function BoardCanvas() {
       }
       return;
     }
+
+    // line/arrow
+    const l = s as LineLike;
     ctx.beginPath();
-    ctx.moveTo(s.x1, s.y1);
-    ctx.lineTo(s.x2, s.y2);
+    ctx.moveTo(l.x1, l.y1);
+    ctx.lineTo(l.x2, l.y2);
     ctx.stroke();
-    if (s.type === "arrow")
-      drawArrowHead(ctx, s.x1, s.y1, s.x2, s.y2, (s as any).strokeWidth || 2);
+    if (l.type === "arrow") drawArrowHead(ctx, l.x1, l.y1, l.x2, l.y2, (l as any).strokeWidth || 2);
   }
 
   function drawArrowHead(
@@ -312,15 +413,9 @@ export function BoardCanvas() {
     const size = 10 + width;
     ctx.beginPath();
     ctx.moveTo(x2, y2);
-    ctx.lineTo(
-      x2 - size * Math.cos(angle - Math.PI / 6),
-      y2 - size * Math.sin(angle - Math.PI / 6)
-    );
+    ctx.lineTo(x2 - size * Math.cos(angle - Math.PI / 6), y2 - size * Math.sin(angle - Math.PI / 6));
     ctx.moveTo(x2, y2);
-    ctx.lineTo(
-      x2 - size * Math.cos(angle + Math.PI / 6),
-      y2 - size * Math.sin(angle + Math.PI / 6)
-    );
+    ctx.lineTo(x2 - size * Math.cos(angle + Math.PI / 6), y2 - size * Math.sin(angle + Math.PI / 6));
     ctx.stroke();
   }
 
@@ -329,12 +424,17 @@ export function BoardCanvas() {
     ctx.strokeStyle = "#3b82f6";
     ctx.lineWidth = 1;
     ctx.setLineDash([6, 4]);
+
     if (isRectLike(s)) {
       ctx.strokeRect(s.x - 2, s.y - 2, s.w + 4, s.h + 4);
       for (const h of rectHandles(s)) drawHandle(ctx, h.x, h.y);
-    } else {
+    } else if (isLineLike(s)) {
       drawHandle(ctx, s.x1, s.y1);
       drawHandle(ctx, s.x2, s.y2);
+    } else if (isFreehand(s)) {
+      const b = s.bbox;
+      ctx.strokeRect(b.x - 2, b.y - 2, b.w + 4, b.h + 4);
+      for (const h of rectHandles(b)) drawHandle(ctx, h.x, h.y);
     }
     ctx.restore();
   }
@@ -349,33 +449,35 @@ export function BoardCanvas() {
     ctx.fill();
     ctx.stroke();
   }
-  function isRectLike(s: Shape): s is RectLike {
-    return (
-      s.type === "rect" ||
-      s.type === "ellipse" ||
-      s.type === "diamond" ||
-      s.type === "circle" ||
-      s.type === "triangle" ||
-      s.type === "text"
-    );
+
+  /** -------------------- Coordinate helpers -------------------- */
+  function screenToWorld(pt: { x: number; y: number }) {
+    const cam = cameraRef.current;
+    return { x: (pt.x - cam.tx) / cam.scale, y: (pt.y - cam.ty) / cam.scale };
   }
+  function worldToScreen(pt: { x: number; y: number }) {
+    const cam = cameraRef.current;
+    return { x: pt.x * cam.scale + cam.tx, y: pt.y * cam.scale + cam.ty };
+  }
+
   function canvasPoint(e: React.MouseEvent<HTMLCanvasElement>) {
     const rect = e.currentTarget.getBoundingClientRect();
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   }
 
+  /** -------------------- Pointer handlers -------------------- */
   function handlePointerDown(e: React.MouseEvent<HTMLCanvasElement>) {
     isPointerDownRef.current = true;
-    const p = canvasPoint(e);
+    const p = screenToWorld(canvasPoint(e));
     dragStartRef.current = p;
+
     if (tool === "select") {
       const hit = hitTest(p.x, p.y, shapes);
       if (hit) {
         setSelectedId(hit.shape.id);
         resizeHandleRef.current = hit.handle;
-        // Start drag state
         isDraggingRef.current = true;
-        draggedShapeRef.current = { ...hit.shape } as Shape;
+        draggedShapeRef.current = JSON.parse(JSON.stringify(hit.shape)) as Shape;
       } else {
         setSelectedId(null);
         resizeHandleRef.current = null;
@@ -384,17 +486,29 @@ export function BoardCanvas() {
       }
       return;
     }
+
     if (tool === "text") return;
+
     const id = generateId();
     const stroke = "#111111";
     const strokeWidth = 2;
-    if (
-      tool === "rect" ||
-      tool === "ellipse" ||
-      tool === "diamond" ||
-      tool === "circle" ||
-      tool === "triangle"
-    ) {
+
+    if (tool === "freehand") {
+      const fh: Freehand = {
+        id,
+        type: "freehand",
+        points: [p],
+        stroke,
+        strokeWidth,
+        bbox: { x: p.x, y: p.y, w: 0, h: 0 },
+      };
+      draftShapeRef.current = fh;
+      if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = requestAnimationFrame(() => renderCanvas());
+      return;
+    }
+
+    if (tool === "rect" || tool === "ellipse" || tool === "diamond" || tool === "circle" || tool === "triangle") {
       draftShapeRef.current = {
         id,
         type: tool as any,
@@ -408,7 +522,7 @@ export function BoardCanvas() {
     } else {
       draftShapeRef.current = {
         id,
-        type: tool,
+        type: tool as any,
         x1: p.x,
         y1: p.y,
         x2: p.x,
@@ -417,26 +531,21 @@ export function BoardCanvas() {
         strokeWidth,
       } as LineLike;
     }
-    if (animationFrameRef.current)
-      cancelAnimationFrame(animationFrameRef.current);
+
+    if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
     animationFrameRef.current = requestAnimationFrame(() => renderCanvas());
   }
 
   function handleDoubleClick(e: React.MouseEvent<HTMLCanvasElement>) {
-    const p = canvasPoint(e);
+    const p = screenToWorld(canvasPoint(e));
     const hit = hitTest(p.x, p.y, shapes);
     if (hit && (hit.shape as any).type === "text") {
       const t = hit.shape as TextShape;
       setSelectedId(t.id);
-      setTextEditor({
-        visible: true,
-        x: t.x,
-        y: t.y,
-        value: t.text,
-        shapeId: t.id,
-      });
+      setTextEditor({ visible: true, x: t.x, y: t.y, value: t.text, shapeId: t.id });
       return;
     }
+
     const id = generateId();
     const base: TextShape = {
       id,
@@ -461,7 +570,17 @@ export function BoardCanvas() {
 
   function handlePointerMove(e: React.MouseEvent<HTMLCanvasElement>) {
     if (!isPointerDownRef.current) return;
-    const p = canvasPoint(e);
+    const p = screenToWorld(canvasPoint(e));
+
+    if (tool === "freehand" && draftShapeRef.current && isFreehand(draftShapeRef.current)) {
+      const d = draftShapeRef.current as Freehand;
+      d.points.push(p);
+      const b = computeBBox(d.points);
+      d.bbox = b;
+      if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = requestAnimationFrame(() => renderCanvas());
+      return;
+    }
 
     if (tool === "select" && isDraggingRef.current && draggedShapeRef.current) {
       const start = dragStartRef.current!;
@@ -469,10 +588,10 @@ export function BoardCanvas() {
       const dy = p.y - start.y;
       dragStartRef.current = p;
 
-      let updated: Shape = { ...draggedShapeRef.current } as any;
+      let updated: Shape = JSON.parse(JSON.stringify(draggedShapeRef.current)) as Shape;
 
       if (resizeHandleRef.current) {
-        // Resizing
+        // resizing
         if (isRectLike(updated)) {
           let { x, y, w, h } = updated;
           if (resizeHandleRef.current.includes("n")) {
@@ -480,23 +599,19 @@ export function BoardCanvas() {
             h = h - dy;
             y = newY;
           }
-          if (resizeHandleRef.current.includes("s")) {
-            h = h + dy;
-          }
+          if (resizeHandleRef.current.includes("s")) h = h + dy;
           if (resizeHandleRef.current.includes("w")) {
             const newX = x + dx;
             w = w - dx;
             x = newX;
           }
-          if (resizeHandleRef.current.includes("e")) {
-            w = w + dx;
-          }
+          if (resizeHandleRef.current.includes("e")) w = w + dx;
           const norm = normalizeRect({ x, y, w, h });
           (updated as RectLike).x = norm.x;
           (updated as RectLike).y = norm.y;
           (updated as RectLike).w = norm.w;
           (updated as RectLike).h = norm.h;
-        } else {
+        } else if (isLineLike(updated)) {
           if (resizeHandleRef.current === "start") {
             (updated as LineLike).x1 += dx;
             (updated as LineLike).y1 += dy;
@@ -504,32 +619,39 @@ export function BoardCanvas() {
             (updated as LineLike).x2 += dx;
             (updated as LineLike).y2 += dy;
           }
+        } else if (isFreehand(updated)) {
+          // (optional) implement resize via handles if you want
         }
       } else {
-        // Moving
+        // moving
         if (isRectLike(updated)) {
           (updated as RectLike).x += dx;
           (updated as RectLike).y += dy;
-        } else {
+        } else if (isLineLike(updated)) {
           (updated as LineLike).x1 += dx;
           (updated as LineLike).y1 += dy;
           (updated as LineLike).x2 += dx;
           (updated as LineLike).y2 += dy;
+        } else if (isFreehand(updated)) {
+          updated.points = updated.points.map((pt) => ({ x: pt.x + dx, y: pt.y + dy }));
+          updated.bbox = {
+            x: updated.bbox.x + dx,
+            y: updated.bbox.y + dy,
+            w: updated.bbox.w,
+            h: updated.bbox.h,
+          };
         }
       }
 
-      // Update the dragged shape reference for smooth rendering
       draggedShapeRef.current = updated;
       mutatedDuringDragRef.current = true;
 
-      // Use requestAnimationFrame for smooth rendering
-      if (animationFrameRef.current)
-        cancelAnimationFrame(animationFrameRef.current);
+      if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
       animationFrameRef.current = requestAnimationFrame(() => renderCanvas());
       return;
     }
 
-    // Handle draft shape creation
+    // draft rect/line
     if (draftShapeRef.current) {
       const d = draftShapeRef.current;
       if (isRectLike(d)) {
@@ -543,12 +665,11 @@ export function BoardCanvas() {
           d.w = dw;
           d.h = dh;
         }
-      } else {
+      } else if (isLineLike(d)) {
         d.x2 = p.x;
         d.y2 = p.y;
       }
-      if (animationFrameRef.current)
-        cancelAnimationFrame(animationFrameRef.current);
+      if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
       animationFrameRef.current = requestAnimationFrame(() => renderCanvas());
     }
   }
@@ -556,10 +677,19 @@ export function BoardCanvas() {
   function handlePointerUp() {
     isPointerDownRef.current = false;
 
-    // Handle draft shape creation
-    if (draftShapeRef.current) {
-      const d = draftShapeRef.current;
-      let toAdd: Shape = d as any;
+    // finalize freehand
+    if (draftShapeRef.current && isFreehand(draftShapeRef.current)) {
+      const d = draftShapeRef.current as Freehand;
+      d.bbox = computeBBox(d.points);
+      setShapes((prev) => [...prev, d]);
+      socketRef.current?.emit("shape-create", { boardId, shape: d });
+      draftShapeRef.current = null;
+    }
+
+    // finalize rect/line
+    if (draftShapeRef.current && !isFreehand(draftShapeRef.current)) {
+      const d = draftShapeRef.current as any;
+      let toAdd: Shape = d as Shape;
       if (isRectLike(d)) {
         const norm = normalizeRect({ x: d.x, y: d.y, w: d.w, h: d.h });
         toAdd = { ...(d as RectLike), ...norm } as RectLike;
@@ -569,34 +699,19 @@ export function BoardCanvas() {
       draftShapeRef.current = null;
     }
 
-    // Handle end of dragging
-    if (
-      isDraggingRef.current &&
-      draggedShapeRef.current &&
-      mutatedDuringDragRef.current
-    ) {
-      // Commit the dragged shape to the main state and emit socket event
+    // end dragging
+    if (isDraggingRef.current && draggedShapeRef.current && mutatedDuringDragRef.current) {
       const finalShape = draggedShapeRef.current;
       const originalShape = shapes.find((s) => s.id === finalShape.id);
-
       if (originalShape) {
-        setShapes((prev) =>
-          prev.map((s) => (s.id === finalShape.id ? finalShape : s))
-        );
-
-        // Send the final position via socket (only once at the end)
+        setShapes((prev) => prev.map((s) => (s.id === finalShape.id ? finalShape : s)));
         const diff = diffShape(originalShape, finalShape);
         if (Object.keys(diff).length > 0) {
-          socketRef.current?.emit("shape-update", {
-            boardId,
-            shapeId: finalShape.id,
-            props: diff,
-          });
+          socketRef.current?.emit("shape-update", { boardId, shapeId: finalShape.id, props: diff });
         }
       }
     }
 
-    // Reset drag state
     isDraggingRef.current = false;
     draggedShapeRef.current = null;
     resizeHandleRef.current = null;
@@ -604,7 +719,8 @@ export function BoardCanvas() {
     mutatedDuringDragRef.current = false;
   }
 
-  function rectHandles(s: RectLike) {
+  /** -------------------- Hit test + helpers -------------------- */
+  function rectHandles(s: { x: number; y: number; w: number; h: number }) {
     const x2 = s.x + s.w;
     const y2 = s.y + s.h;
     return [
@@ -614,6 +730,7 @@ export function BoardCanvas() {
       { name: "se", x: x2, y: y2 },
     ];
   }
+
   function hitTest(
     x: number,
     y: number,
@@ -621,35 +738,28 @@ export function BoardCanvas() {
   ): { shape: Shape; handle: string | null } | null {
     for (let i = list.length - 1; i >= 0; i--) {
       const s = list[i];
+      if (isFreehand(s)) {
+        if (polylineHit(x, y, s.points, 6)) return { shape: s, handle: null };
+        continue;
+      }
       if (isRectLike(s)) {
-        const handle = rectHandles(s).find(
-          (h) => Math.abs(h.x - x) <= 6 && Math.abs(h.y - y) <= 6
-        );
+        const handle = rectHandles(s).find((h) => Math.abs(h.x - x) <= 6 && Math.abs(h.y - y) <= 6);
         if (handle) return { shape: s, handle: handle.name as string } as any;
-        if (x >= s.x && x <= s.x + s.w && y >= s.y && y <= s.y + s.h)
-          return { shape: s, handle: null };
+        if (x >= s.x && x <= s.x + s.w && y >= s.y && y <= s.y + s.h) return { shape: s, handle: null };
       } else {
-        if (distance(x, y, s.x1, s.y1) <= 6)
-          return { shape: s, handle: "start" } as any;
-        if (distance(x, y, s.x2, s.y2) <= 6)
-          return { shape: s, handle: "end" } as any;
-        if (pointToSegmentDistance(x, y, s.x1, s.y1, s.x2, s.y2) < 6)
-          return { shape: s, handle: null };
+        const l = s as LineLike;
+        if (distance(x, y, l.x1, l.y1) <= 6) return { shape: s, handle: "start" } as any;
+        if (distance(x, y, l.x2, l.y2) <= 6) return { shape: s, handle: "end" } as any;
+        if (pointToSegmentDistance(x, y, l.x1, l.y1, l.x2, l.y2) < 6) return { shape: s, handle: null };
       }
     }
     return null;
   }
+
   function distance(ax: number, ay: number, bx: number, by: number) {
     return Math.hypot(ax - bx, ay - by);
   }
-  function pointToSegmentDistance(
-    px: number,
-    py: number,
-    x1: number,
-    y1: number,
-    x2: number,
-    y2: number
-  ) {
+  function pointToSegmentDistance(px: number, py: number, x1: number, y1: number, x2: number, y2: number) {
     const A = px - x1;
     const B = py - y1;
     const C = x2 - x1;
@@ -662,6 +772,27 @@ export function BoardCanvas() {
     const yy = y1 + t * D;
     return Math.hypot(px - xx, py - yy);
   }
+  function polylineHit(x: number, y: number, pts: { x: number; y: number }[], tol: number) {
+    for (let i = 1; i < pts.length; i++) {
+      if (pointToSegmentDistance(x, y, pts[i - 1].x, pts[i - 1].y, pts[i].x, pts[i].y) <= tol) return true;
+    }
+    return false;
+  }
+
+  function computeBBox(pts: { x: number; y: number }[]) {
+    let minX = Infinity,
+      minY = Infinity,
+      maxX = -Infinity,
+      maxY = -Infinity;
+    for (const p of pts) {
+      if (p.x < minX) minX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y > maxY) maxY = p.y;
+    }
+    return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+  }
+
   function normalizeRect(r: { x: number; y: number; w: number; h: number }) {
     let { x, y, w, h } = r;
     if (w < 0) {
@@ -674,6 +805,7 @@ export function BoardCanvas() {
     }
     return { x, y, w, h };
   }
+
   function diffShape(prev: Shape, next: Shape): Partial<Shape> {
     const diff: any = {};
     for (const k of Object.keys(next) as (keyof Shape)[]) {
@@ -682,28 +814,163 @@ export function BoardCanvas() {
     return diff;
   }
 
-  // UI
-  const palette = [
-    "#111111",
-    "#EF4444",
-    "#F59E0B",
-    "#10B981",
-    "#3B82F6",
-    "#8B5CF6",
-    "#EC4899",
-    "#000000",
-    "#FFFFFF",
-  ];
+  /** -------------------- Clipboard + keyboard -------------------- */
+  function cloneForPaste(s: Shape): Shape {
+    const id = generateId();
+    const offset = 16;
+    if (isRectLike(s)) {
+      const base = s as RectLike | TextShape;
+      return { ...base, id, x: base.x + offset, y: base.y + offset } as Shape;
+    } else if (isLineLike(s)) {
+      const l = s as LineLike;
+      return { ...l, id, x1: l.x1 + offset, y1: l.y1 + offset, x2: l.x2 + offset, y2: l.y2 + offset } as Shape;
+    } else {
+      const f = s as Freehand;
+      const pts = f.points.map((p) => ({ x: p.x + offset, y: p.y + offset }));
+      const b = computeBBox(pts);
+      return { ...f, id, points: pts, bbox: b } as Shape;
+    }
+  }
+  function copySelected() {
+    const selId = selectedIdRef.current;
+    if (!selId) return;
+    const s = shapesRef.current.find((sh) => sh.id === selId);
+    if (!s) return;
+    clipboardRef.current = JSON.parse(JSON.stringify(s));
+  }
+  function cutSelected() {
+    copySelected();
+    deleteSelected();
+  }
+  function pasteClipboard() {
+    const clip = clipboardRef.current;
+    if (!clip) return;
+    const pasted = cloneForPaste(clip);
+    setShapes((prev) => [...prev, pasted]);
+    setSelectedId(pasted.id);
+    socketRef.current?.emit("shape-create", { boardId, shape: pasted });
+  }
+  function deleteSelected() {
+    const selId = selectedIdRef.current;
+    if (!selId) return;
+    isDraggingRef.current = false;
+    draggedShapeRef.current = null;
+    setShapes((prev) => prev.filter((s) => s.id !== selId));
+    setSelectedId(null);
+    socketRef.current?.emit("shape-delete", { boardId, shapeId: selId });
+  }
+
+  useEffect(() => {
+    const isTypingTarget = () => {
+      const el = document.activeElement as HTMLElement | null;
+      return (
+        textEditor.visible ||
+        (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || (el as any).isContentEditable))
+      );
+    };
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (isTypingTarget()) return;
+
+      const mod = e.metaKey || e.ctrlKey;
+      const key = e.key.toLowerCase();
+
+      if (e.key === "Delete" || e.key === "Backspace") {
+        if (selectedIdRef.current) {
+          e.preventDefault();
+          deleteSelected();
+        }
+        return;
+      }
+      if (mod && key === "c") {
+        if (selectedIdRef.current) {
+          e.preventDefault();
+          copySelected();
+        }
+        return;
+      }
+      if (mod && key === "x") {
+        if (selectedIdRef.current) {
+          e.preventDefault();
+          cutSelected();
+        }
+        return;
+      }
+      if (mod && key === "v") {
+        e.preventDefault();
+        pasteClipboard();
+        return;
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [textEditor.visible]);
+
+  /** -------------------- Pan / Zoom (infinite canvas) -------------------- */
+  useEffect(() => {
+    const el = wrapperRef.current;
+    if (!el) return;
+
+    const onWheel = (e: WheelEvent) => {
+      // Allow smooth trackpad pan with two fingers, and pinch-zoom (ctrlKey true on macOS)
+      e.preventDefault();
+
+      const cam = cameraRef.current;
+
+      if (e.ctrlKey) {
+        // zoom around cursor
+        const rect = (canvasRef.current as HTMLCanvasElement).getBoundingClientRect();
+        const screenX = e.clientX - rect.left;
+        const screenY = e.clientY - rect.top;
+        const worldBefore = screenToWorld({ x: screenX, y: screenY });
+
+        const zoomIntensity = 0.0015;
+        const newScale = clamp(cam.scale * (1 - e.deltaY * zoomIntensity), 0.25, 3);
+
+        cam.scale = newScale;
+
+        // keep cursor anchored
+        cam.tx = screenX - worldBefore.x * newScale;
+        cam.ty = screenY - worldBefore.y * newScale;
+      } else {
+        // pan
+        cam.tx -= e.deltaX;
+        cam.ty -= e.deltaY;
+      }
+
+      setViewVersion((v) => v + 1); // re-position text editor overlay
+      if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = requestAnimationFrame(() => renderCanvas());
+    };
+
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel as any);
+  }, []);
+
+  function clamp(v: number, min: number, max: number) {
+    return Math.max(min, Math.min(max, v));
+  }
+
+  /** -------------------- UI -------------------- */
+  const palette = ["#111111", "#EF4444", "#F59E0B", "#10B981", "#3B82F6", "#8B5CF6", "#EC4899", "#000000", "#FFFFFF"];
+
+  // keep canvas size in sync with viewport
+  useEffect(() => {
+    const onResize = () => {
+      if (!canvasRef.current) return;
+      canvasRef.current.width = window.innerWidth;
+      canvasRef.current.height = window.innerHeight - 110;
+      renderCanvas();
+    };
+    onResize();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
-    <div
-      style={{
-        width: "100vw",
-        height: "100vh",
-        display: "flex",
-        flexDirection: "column",
-      }}
-    >
+    <div style={{ width: "100vw", height: "100vh", display: "flex", flexDirection: "column" }}>
       {/* Top bar */}
       <div
         style={{
@@ -712,91 +979,59 @@ export function BoardCanvas() {
           justifyContent: "space-between",
           padding: "8px 12px",
           borderBottom: "1px solid #e5e5e5",
+          background: "#fff",
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <button onClick={() => navigate("/")}>{"← Back"}</button>
+          <button onClick={() => navigate("/")} style={{ cursor: "pointer" }}>
+            ← Back
+          </button>
           <div style={{ display: "flex", gap: 8 }}>
-            <ToolButton
-              active={tool === "select"}
-              onClick={() => setTool("select")}
-            >
-              Select
-            </ToolButton>
-            <ToolButton
-              active={tool === "rect"}
-              onClick={() => setTool("rect")}
-            >
-              □
-            </ToolButton>
-            <ToolButton
-              active={tool === "ellipse"}
-              onClick={() => setTool("ellipse")}
-            >
-              ◯
-            </ToolButton>
-            <ToolButton
-              active={tool === "circle"}
-              onClick={() => setTool("circle")}
-            >
-              ●
-            </ToolButton>
-            <ToolButton
-              active={tool === "diamond"}
-              onClick={() => setTool("diamond")}
-            >
-              ◇
-            </ToolButton>
-            <ToolButton
-              active={tool === "triangle"}
-              onClick={() => setTool("triangle")}
-            >
-              △
-            </ToolButton>
-            <ToolButton
-              active={tool === "line"}
-              onClick={() => setTool("line")}
-            >
-              ─
-            </ToolButton>
-            <ToolButton
-              active={tool === "arrow"}
-              onClick={() => setTool("arrow")}
-            >
-              →
-            </ToolButton>
-            <ToolButton
-              active={tool === "text"}
-              onClick={() => setTool("text")}
-            >
-              T
-            </ToolButton>
+            {([
+              ["select", "Select"],
+              ["rect", "□"],
+              ["ellipse", "◯"],
+              ["circle", "●"],
+              ["diamond", "◇"],
+              ["triangle", "△"],
+              ["line", "─"],
+              ["arrow", "→"],
+              ["text", "T"],
+              ["freehand", "✎"], // new pen tool
+            ] as [Tool, string][]).map(([t, label]) => (
+              <button
+                key={t}
+                onClick={() => setTool(t)}
+                style={{
+                  padding: "6px 10px",
+                  borderRadius: 6,
+                  border: "none",
+                  background: tool === t ? "#eff6ff" : "transparent",
+                  cursor: "pointer",
+                }}
+                title={t}
+              >
+                {label}
+              </button>
+            ))}
           </div>
         </div>
         <input
           value={boardName}
           onChange={(e) => setBoardName(e.target.value)}
           placeholder="Untitled document"
-          style={{ border: "none", fontSize: 16, textAlign: "right" }}
+          style={{ border: "none", fontSize: 16, textAlign: "right", outline: "none" }}
         />
       </div>
 
-      {/* Context inspector (only when selected) */}
+      {/* Inspector */}
       {selectedId &&
         (() => {
           const sel = shapes.find((s) => s.id === selectedId);
           if (!sel) return null;
-          const updateSel = (props: any) => {
-            setShapes((prev) =>
-              prev.map((s) =>
-                s.id === selectedId ? ({ ...s, ...props } as Shape) : s
-              )
-            );
-            socketRef.current?.emit("shape-update", {
-              boardId,
-              shapeId: selectedId,
-              props,
-            });
+          const updateSel = (props: Partial<Shape>) => {
+            setShapes((prev) => prev.map((s) => (s.id === selectedId ? ({ ...s, ...props } as Shape) : s)));
+            socketRef.current?.emit("shape-update", { boardId, shapeId: selectedId, props });
           };
           return (
             <div
@@ -806,20 +1041,21 @@ export function BoardCanvas() {
                 gap: 8,
                 padding: 8,
                 borderBottom: "1px dashed #cbd5e1",
+                flexWrap: "wrap",
+                background: "#fff",
               }}
             >
-              <span style={{ opacity: 0.7 }}>
-                Selected: {(sel as any).type}
-              </span>
+              <span style={{ opacity: 0.7 }}>Selected: {(sel as any).type}</span>
               <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 <span>Width</span>
                 <input
                   type="number"
                   min={1}
-                  max={12}
+                  max={14}
                   value={(sel as any).strokeWidth || 2}
                   onChange={(e) => {
-                    updateSel({ strokeWidth: Number(e.target.value) });
+                    const v = Number(e.target.value) || 1;
+                    updateSel({ strokeWidth: v } as any);
                   }}
                   style={{ width: 64 }}
                 />
@@ -830,9 +1066,9 @@ export function BoardCanvas() {
                     key={c}
                     title={c}
                     onClick={() => {
-                      if ((sel as any).type === "text") updateSel({ color: c });
-                      else if (isRectLike(sel)) updateSel({ fill: c });
-                      else updateSel({ stroke: c });
+                      if ((sel as any).type === "text") updateSel({ color: c } as any);
+                      else if (isRectLike(sel)) updateSel({ fill: c } as any);
+                      else updateSel({ stroke: c } as any);
                     }}
                     style={{
                       width: 18,
@@ -840,6 +1076,7 @@ export function BoardCanvas() {
                       borderRadius: 4,
                       border: "1px solid #e5e5e5",
                       background: c,
+                      cursor: "pointer",
                     }}
                   />
                 ))}
@@ -848,59 +1085,92 @@ export function BoardCanvas() {
           );
         })()}
 
-      {/* Canvas area fills remaining space */}
-      <div ref={wrapperRef} style={{ position: "relative", flex: 1 }}>
+      {/* Canvas + Guide */}
+      <div ref={wrapperRef} style={{ position: "relative", flex: 1, background: GRID_BG }}>
         <canvas
           ref={canvasRef}
           width={window.innerWidth}
-          height={window.innerHeight - 100}
+          height={window.innerHeight - 110}
           onMouseDown={handlePointerDown}
           onDoubleClick={handleDoubleClick}
           onMouseMove={handlePointerMove}
           onMouseUp={handlePointerUp}
           onMouseLeave={handlePointerUp}
-          style={{ width: "100%", height: "100%", background: "#ffffff" }}
+          style={{
+            width: "100%",
+            height: "100%",
+            display: "block",
+            cursor: tool === "select" ? "default" : tool === "freehand" ? "crosshair" : "crosshair",
+            background: "transparent",
+          }}
         />
-        {textEditor.visible && (
-          <textarea
-            autoFocus
-            value={textEditor.value}
-            onChange={(e) =>
-              setTextEditor((t) => ({ ...t, value: e.target.value }))
-            }
-            onBlur={() => finalizeTextEditor()}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                finalizeTextEditor();
-              }
-            }}
-            style={{
-              position: "absolute",
-              left: textEditor.x,
-              top: textEditor.y,
-              width: 240,
-              height: 60,
-              border: "1px solid #3b82f6",
-              borderRadius: 6,
-              padding: 6,
-              background: "#fff",
-            }}
-          />
-        )}
+
+        {textEditor.visible && (() => {
+          const scr = worldToScreen({ x: textEditor.x, y: textEditor.y });
+          return (
+            <textarea
+              autoFocus
+              value={textEditor.value}
+              onChange={(e) => setTextEditor((t) => ({ ...t, value: e.target.value }))}
+              onBlur={() => finalizeTextEditor()}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  finalizeTextEditor();
+                }
+              }}
+              style={{
+                position: "absolute",
+                left: scr.x,
+                top: scr.y,
+                width: 240,
+                height: 60,
+                border: "1px solid #3b82f6",
+                borderRadius: 6,
+                padding: 6,
+                background: "#fff",
+                outline: "none",
+              }}
+            />
+          );
+        })()}
+
+        {/* tiny helper card like your screenshot */}
+        <div
+          style={{
+            position: "absolute",
+            left: 12,
+            bottom: 12,
+            padding: "10px 12px",
+            background: "#fff",
+            borderRadius: 10,
+            boxShadow: "0 8px 24px rgba(0,0,0,0.08)",
+            color: "#334155",
+            fontSize: 13,
+            lineHeight: 1.3,
+          }}
+        >
+          <b style={{ display: "block", marginBottom: 6 }}>Guide</b>
+          <div>• Pick a tool on the toolbar</div>
+          <div>• Drag to draw / move</div>
+          <div>• Two-finger scroll to pan</div>
+          <div>• Pinch to zoom</div>
+          <div>• ⌘/Ctrl+C/X/V, ⌫ to edit</div>
+          <div>• Double-click to add text</div>
+        </div>
       </div>
     </div>
   );
 
+  /** -------------------- Text editor finalize -------------------- */
   function finalizeTextEditor() {
     if (!textEditor.visible) return;
-    const shape = shapes.find((s) => s.id === textEditor.shapeId) as
-      | TextShape
-      | undefined;
+    const shape = shapes.find((s) => s.id === textEditor.shapeId) as TextShape | undefined;
     if (!shape) {
       setTextEditor({ visible: false, x: 0, y: 0, value: "", shapeId: null });
       return;
     }
+
     const value = textEditor.value;
     if (!value.trim()) {
       const nextList = shapes.filter((s) => s.id !== shape.id);
@@ -909,13 +1179,9 @@ export function BoardCanvas() {
       setTextEditor({ visible: false, x: 0, y: 0, value: "", shapeId: null });
       return;
     }
+
     const dim = measureText(value, shape.fontSize, shape.fontFamily);
-    const next: TextShape = {
-      ...shape,
-      text: value,
-      w: dim.width,
-      h: dim.height,
-    };
+    const next: TextShape = { ...shape, text: value, w: dim.width, h: dim.height };
     setShapes((prev) => prev.map((s) => (s.id === shape.id ? next : s)));
     socketRef.current?.emit("shape-update", {
       boardId,
@@ -924,24 +1190,4 @@ export function BoardCanvas() {
     });
     setTextEditor({ visible: false, x: 0, y: 0, value: "", shapeId: null });
   }
-}
-
-function ToolButton(props: {
-  active?: boolean;
-  onClick?: () => void;
-  children: any;
-}) {
-  return (
-    <button
-      onClick={props.onClick}
-      style={{
-        padding: "6px 10px",
-        borderRadius: 6,
-        border: "none",
-        background: props.active ? "#eff6ff" : "transparent",
-      }}
-    >
-      {props.children}
-    </button>
-  );
 }
