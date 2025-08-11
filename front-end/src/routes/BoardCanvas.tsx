@@ -12,13 +12,30 @@ type ShapeType =
   | "triangle"
   | "line"
   | "arrow"
+  | "arrowDouble"
+  | "orthogonal"
   | "text"
-  | "freehand";
+  | "freehand"
+  | "cylinder"
+  | "cloud"
+  | "callout"
+  | "starburst";
+
 type Tool = "select" | ShapeType;
 
 type RectLike = {
   id: string;
-  type: "rect" | "ellipse" | "diamond" | "circle" | "triangle" | "text";
+  type:
+    | "rect"
+    | "ellipse"
+    | "diamond"
+    | "circle"
+    | "triangle"
+    | "text"
+    | "cylinder"
+    | "cloud"
+    | "callout"
+    | "starburst";
   x: number;
   y: number;
   w: number;
@@ -30,7 +47,7 @@ type RectLike = {
 
 type LineLike = {
   id: string;
-  type: "line" | "arrow";
+  type: "line" | "arrow" | "arrowDouble" | "orthogonal";
   x1: number;
   y1: number;
   x2: number;
@@ -61,9 +78,9 @@ type Shape = RectLike | LineLike | TextShape | Freehand;
 /** -------------------- Config / Utils -------------------- */
 const API_BASE = (import.meta as any).env?.VITE_API_BASE ?? "http://localhost:5000";
 const GRID_SIZE = 24; // world units
-const GRID_BG = "#fbfbfd"; // soft background similar to your screenshot
-const GRID_LINE = "#eef1f5"; // tiny squares color
-const GRID_BOLD = "#e5e9f0"; // every 5th line
+const GRID_BG = "#fbfbfd";
+const GRID_LINE = "#eef1f5";
+const GRID_BOLD = "#e5e9f0";
 
 function generateId(): string {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -84,11 +101,15 @@ function isRectLike(s: Shape): s is RectLike {
     s.type === "diamond" ||
     s.type === "circle" ||
     s.type === "triangle" ||
-    s.type === "text"
+    s.type === "text" ||
+    s.type === "cylinder" ||
+    s.type === "cloud" ||
+    s.type === "callout" ||
+    s.type === "starburst"
   );
 }
 function isLineLike(s: Shape): s is LineLike {
-  return s.type === "line" || s.type === "arrow";
+  return s.type === "line" || s.type === "arrow" || s.type === "arrowDouble" || s.type === "orthogonal";
 }
 function isFreehand(s: Shape): s is Freehand {
   return s.type === "freehand";
@@ -267,11 +288,10 @@ export function BoardCanvas() {
 
   function drawGrid(ctx: CanvasRenderingContext2D, w: number, h: number, cam: { tx: number; ty: number; scale: number }) {
     const s = cam.scale;
-    const step = GRID_SIZE * s;
 
     // visible world bounds
-    const leftW = (-cam.tx) / s;
-    const topW = (-cam.ty) / s;
+    const leftW = -cam.tx / s;
+    const topW = -cam.ty / s;
     const rightW = leftW + w / s;
     const bottomW = topW + h / s;
 
@@ -312,6 +332,7 @@ export function BoardCanvas() {
     ctx.stroke();
   }
 
+  /** -------------------- Draw shapes -------------------- */
   function drawShape(ctx: CanvasRenderingContext2D, s: Shape) {
     ctx.lineWidth = (s as any).strokeWidth || 2;
     ctx.strokeStyle = (s as any).stroke || "#111111";
@@ -377,6 +398,22 @@ export function BoardCanvas() {
         ctx.stroke();
         return;
       }
+      if (s.type === "cylinder") {
+        drawCylinder(ctx, s);
+        return;
+      }
+      if (s.type === "cloud") {
+        drawCloud(ctx, s);
+        return;
+      }
+      if (s.type === "callout") {
+        drawCallout(ctx, s);
+        return;
+      }
+      if (s.type === "starburst") {
+        drawStarburst(ctx, s);
+        return;
+      }
       if (s.type === "text") {
         const t = s as TextShape;
         ctx.font = `${t.fontSize}px ${t.fontFamily}`;
@@ -392,13 +429,31 @@ export function BoardCanvas() {
       return;
     }
 
-    // line/arrow
+    // line / arrow / arrowDouble / orthogonal
     const l = s as LineLike;
+
+    if (l.type === "orthogonal") {
+      const bend = { x: l.x2, y: l.y1 }; // right-angle elbow
+      ctx.beginPath();
+      ctx.moveTo(l.x1, l.y1);
+      ctx.lineTo(bend.x, bend.y);
+      ctx.lineTo(l.x2, l.y2);
+      ctx.stroke();
+      return;
+    }
+
     ctx.beginPath();
     ctx.moveTo(l.x1, l.y1);
     ctx.lineTo(l.x2, l.y2);
     ctx.stroke();
-    if (l.type === "arrow") drawArrowHead(ctx, l.x1, l.y1, l.x2, l.y2, (l as any).strokeWidth || 2);
+
+    if (l.type === "arrow" || l.type === "arrowDouble") {
+      drawArrowHead(ctx, l.x1, l.y1, l.x2, l.y2, (l as any).strokeWidth || 2);
+      if (l.type === "arrowDouble") {
+        // reverse head
+        drawArrowHead(ctx, l.x2, l.y2, l.x1, l.y1, (l as any).strokeWidth || 2);
+      }
+    }
   }
 
   function drawArrowHead(
@@ -416,6 +471,153 @@ export function BoardCanvas() {
     ctx.lineTo(x2 - size * Math.cos(angle - Math.PI / 6), y2 - size * Math.sin(angle - Math.PI / 6));
     ctx.moveTo(x2, y2);
     ctx.lineTo(x2 - size * Math.cos(angle + Math.PI / 6), y2 - size * Math.sin(angle + Math.PI / 6));
+    ctx.stroke();
+  }
+
+  function drawCylinder(ctx: CanvasRenderingContext2D, r: RectLike) {
+    const { x, y, w, h } = r;
+    const rx = Math.abs(w / 2);
+    const ry = Math.abs(Math.min(h / 6, Math.abs(w) / 4)); // ellipse thickness
+    const cx = x + w / 2;
+
+    // body
+    if (r.fill) {
+      ctx.fillStyle = r.fill;
+      ctx.fillRect(x, y + ry, w, h - 2 * ry);
+    }
+    ctx.strokeRect(x, y + ry, w, h - 2 * ry);
+
+    // top ellipse (solid)
+    ctx.beginPath();
+    ctx.ellipse(cx, y + ry, rx, ry, 0, 0, Math.PI * 2);
+    if (r.fill) {
+      ctx.fillStyle = r.fill;
+      ctx.fill();
+    }
+    ctx.stroke();
+
+    // bottom ellipse (front solid, back dashed)
+    // back (dashed)
+    ctx.save();
+    ctx.setLineDash([6, 4]);
+    ctx.beginPath();
+    ctx.ellipse(cx, y + h - ry, rx, ry, 0, Math.PI, 0, true);
+    ctx.stroke();
+    ctx.restore();
+
+    // front
+    ctx.beginPath();
+    ctx.ellipse(cx, y + h - ry, rx, ry, 0, 0, Math.PI);
+    ctx.stroke();
+  }
+
+  function drawCloud(ctx: CanvasRenderingContext2D, r: RectLike) {
+    const { x, y, w, h } = r;
+    const cx = x + w / 2;
+    const cy = y + h / 2;
+    const rx = Math.abs(w / 2);
+    const ry = Math.abs(h / 2);
+
+    // approximate cloud with several circles
+    const blobs = [
+      { dx: -0.35, dy: 0.1, rr: 0.5 },
+      { dx: -0.05, dy: -0.15, rr: 0.6 },
+      { dx: 0.35, dy: 0.0, rr: 0.55 },
+      { dx: 0.1, dy: 0.25, rr: 0.45 },
+      { dx: -0.25, dy: 0.25, rr: 0.45 },
+    ];
+
+    ctx.beginPath();
+    for (let i = 0; i < blobs.length; i++) {
+      const b = blobs[i];
+      const bx = cx + b.dx * w;
+      const by = cy + b.dy * h;
+      const brx = rx * b.rr;
+      const bry = ry * b.rr;
+      if (i === 0) ctx.ellipse(bx, by, brx, bry, 0, 0, Math.PI * 2);
+      else {
+        // connect smoothly by drawing arcs then relying on fill rule
+        ctx.moveTo(bx + brx, by);
+        ctx.ellipse(bx, by, brx, bry, 0, 0, Math.PI * 2);
+      }
+    }
+    if (r.fill) {
+      ctx.fillStyle = r.fill;
+      ctx.fill("evenodd");
+    }
+    ctx.stroke();
+  }
+
+  function drawCallout(ctx: CanvasRenderingContext2D, r: RectLike) {
+    const radius = Math.min(Math.abs(r.w), Math.abs(r.h)) * 0.12;
+    const tailW = Math.abs(r.w) * 0.22;
+    const tailH = Math.abs(r.h) * 0.22;
+    const tailSide = r.w >= 0 ? 1 : -1; // tail on right if drawn L->R
+
+    const x = r.x, y = r.y, w = r.w, h = r.h;
+    const x2 = x + w, y2 = y + h;
+
+    // rounded rect
+    ctx.beginPath();
+    roundRectPath(ctx, x, y, w, h, radius);
+
+    // tail (bottom-right by default)
+    const tx0 = x2 - tailW * tailSide;
+    const ty0 = y2 - radius * 2;
+    const tipX = x2 + 0.1 * w * tailSide;
+    const tipY = y2 + 0.1 * h;
+
+    ctx.moveTo(tx0, ty0);
+    ctx.lineTo(tipX, tipY);
+    ctx.lineTo(x2 - radius * 2 * tailSide, y2 - radius);
+
+    if (r.fill) {
+      ctx.fillStyle = r.fill;
+      ctx.fill();
+    }
+    ctx.stroke();
+  }
+
+  function roundRectPath(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+    const rr = Math.min(r, Math.abs(w) / 2, Math.abs(h) / 2);
+    const signX = Math.sign(w) || 1;
+    const signY = Math.sign(h) || 1;
+    const _x = x, _y = y, _w = Math.abs(w), _h = Math.abs(h);
+    const left = signX > 0 ? _x : _x - _w;
+    const top = signY > 0 ? _y : _y - _h;
+
+    ctx.moveTo(left + rr, top);
+    ctx.lineTo(left + _w - rr, top);
+    ctx.quadraticCurveTo(left + _w, top, left + _w, top + rr);
+    ctx.lineTo(left + _w, top + _h - rr);
+    ctx.quadraticCurveTo(left + _w, top + _h, left + _w - rr, top + _h);
+    ctx.lineTo(left + rr, top + _h);
+    ctx.quadraticCurveTo(left, top + _h, left, top + _h - rr);
+    ctx.lineTo(left, top + rr);
+    ctx.quadraticCurveTo(left, top, left + rr, top);
+  }
+
+  function drawStarburst(ctx: CanvasRenderingContext2D, r: RectLike) {
+    const spikes = 16; // change for more/less spikes
+    const cx = r.x + r.w / 2;
+    const cy = r.y + r.h / 2;
+    const R = Math.hypot(r.w / 2, r.h / 2) * 0.95;
+    const rInner = R * 0.45;
+
+    ctx.beginPath();
+    for (let i = 0; i < spikes * 2; i++) {
+      const ang = (i / (spikes * 2)) * Math.PI * 2;
+      const rad = i % 2 === 0 ? R : rInner;
+      const px = cx + Math.cos(ang) * rad;
+      const py = cy + Math.sin(ang) * rad;
+      if (i === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.closePath();
+    if (r.fill) {
+      ctx.fillStyle = r.fill;
+      ctx.fill();
+    }
     ctx.stroke();
   }
 
@@ -459,7 +661,6 @@ export function BoardCanvas() {
     const cam = cameraRef.current;
     return { x: pt.x * cam.scale + cam.tx, y: pt.y * cam.scale + cam.ty };
   }
-
   function canvasPoint(e: React.MouseEvent<HTMLCanvasElement>) {
     const rect = e.currentTarget.getBoundingClientRect();
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
@@ -503,12 +704,22 @@ export function BoardCanvas() {
         bbox: { x: p.x, y: p.y, w: 0, h: 0 },
       };
       draftShapeRef.current = fh;
-      if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
-      animationFrameRef.current = requestAnimationFrame(() => renderCanvas());
+      requestNextFrame();
       return;
     }
 
-    if (tool === "rect" || tool === "ellipse" || tool === "diamond" || tool === "circle" || tool === "triangle") {
+    // Rect-like tools
+    if (
+      tool === "rect" ||
+      tool === "ellipse" ||
+      tool === "diamond" ||
+      tool === "circle" ||
+      tool === "triangle" ||
+      tool === "cylinder" ||
+      tool === "cloud" ||
+      tool === "callout" ||
+      tool === "starburst"
+    ) {
       draftShapeRef.current = {
         id,
         type: tool as any,
@@ -518,22 +729,24 @@ export function BoardCanvas() {
         h: 0,
         stroke,
         strokeWidth,
+        fill: tool === "starburst" ? "#fff6" : undefined,
       } as RectLike;
-    } else {
-      draftShapeRef.current = {
-        id,
-        type: tool as any,
-        x1: p.x,
-        y1: p.y,
-        x2: p.x,
-        y2: p.y,
-        stroke,
-        strokeWidth,
-      } as LineLike;
+      requestNextFrame();
+      return;
     }
 
-    if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
-    animationFrameRef.current = requestAnimationFrame(() => renderCanvas());
+    // Line-like tools
+    draftShapeRef.current = {
+      id,
+      type: tool as any,
+      x1: p.x,
+      y1: p.y,
+      x2: p.x,
+      y2: p.y,
+      stroke,
+      strokeWidth,
+    } as LineLike;
+    requestNextFrame();
   }
 
   function handleDoubleClick(e: React.MouseEvent<HTMLCanvasElement>) {
@@ -575,10 +788,8 @@ export function BoardCanvas() {
     if (tool === "freehand" && draftShapeRef.current && isFreehand(draftShapeRef.current)) {
       const d = draftShapeRef.current as Freehand;
       d.points.push(p);
-      const b = computeBBox(d.points);
-      d.bbox = b;
-      if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
-      animationFrameRef.current = requestAnimationFrame(() => renderCanvas());
+      d.bbox = computeBBox(d.points);
+      requestNextFrame();
       return;
     }
 
@@ -645,19 +856,17 @@ export function BoardCanvas() {
 
       draggedShapeRef.current = updated;
       mutatedDuringDragRef.current = true;
-
-      if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
-      animationFrameRef.current = requestAnimationFrame(() => renderCanvas());
+      requestNextFrame();
       return;
     }
 
     // draft rect/line
     if (draftShapeRef.current) {
-      const d = draftShapeRef.current;
+      const d = draftShapeRef.current as any;
       if (isRectLike(d)) {
         let dw = p.x - d.x;
         let dh = p.y - d.y;
-        if ((d as RectLike).type === "circle") {
+        if (d.type === "circle") {
           const size = Math.max(Math.abs(dw), Math.abs(dh));
           d.w = Math.sign(dw || 1) * size;
           d.h = Math.sign(dh || 1) * size;
@@ -669,8 +878,7 @@ export function BoardCanvas() {
         d.x2 = p.x;
         d.y2 = p.y;
       }
-      if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
-      animationFrameRef.current = requestAnimationFrame(() => renderCanvas());
+      requestNextFrame();
     }
   }
 
@@ -748,9 +956,17 @@ export function BoardCanvas() {
         if (x >= s.x && x <= s.x + s.w && y >= s.y && y <= s.y + s.h) return { shape: s, handle: null };
       } else {
         const l = s as LineLike;
+        // endpoints
         if (distance(x, y, l.x1, l.y1) <= 6) return { shape: s, handle: "start" } as any;
         if (distance(x, y, l.x2, l.y2) <= 6) return { shape: s, handle: "end" } as any;
-        if (pointToSegmentDistance(x, y, l.x1, l.y1, l.x2, l.y2) < 6) return { shape: s, handle: null };
+
+        if (l.type === "orthogonal") {
+          const bend = { x: l.x2, y: l.y1 };
+          if (pointToSegmentDistance(x, y, l.x1, l.y1, bend.x, bend.y) < 6) return { shape: s, handle: null };
+          if (pointToSegmentDistance(x, y, bend.x, bend.y, l.x2, l.y2) < 6) return { shape: s, handle: null };
+        } else {
+          if (pointToSegmentDistance(x, y, l.x1, l.y1, l.x2, l.y2) < 6) return { shape: s, handle: null };
+        }
       }
     }
     return null;
@@ -812,6 +1028,11 @@ export function BoardCanvas() {
       if ((next as any)[k] !== (prev as any)[k]) diff[k] = (next as any)[k];
     }
     return diff;
+  }
+
+  function requestNextFrame() {
+    if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
+    animationFrameRef.current = requestAnimationFrame(() => renderCanvas());
   }
 
   /** -------------------- Clipboard + keyboard -------------------- */
@@ -940,8 +1161,7 @@ export function BoardCanvas() {
       }
 
       setViewVersion((v) => v + 1); // re-position text editor overlay
-      if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
-      animationFrameRef.current = requestAnimationFrame(() => renderCanvas());
+      requestNextFrame();
     };
 
     el.addEventListener("wheel", onWheel, { passive: false });
@@ -996,8 +1216,14 @@ export function BoardCanvas() {
               ["triangle", "△"],
               ["line", "─"],
               ["arrow", "→"],
+              ["arrowDouble", "⇄"],
+              ["orthogonal", "└"],
+              ["cylinder", "DB"],
+              ["cloud", "☁︎"],
+              ["callout", "💬"],
+              ["starburst", "✷"],
               ["text", "T"],
-              ["freehand", "✎"], // new pen tool
+              ["freehand", "✎"],
             ] as [Tool, string][]).map(([t, label]) => (
               <button
                 key={t}
@@ -1135,7 +1361,7 @@ export function BoardCanvas() {
           );
         })()}
 
-        {/* tiny helper card like your screenshot */}
+        {/* helper card */}
         <div
           style={{
             position: "absolute",
