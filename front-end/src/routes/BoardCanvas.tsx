@@ -1352,30 +1352,6 @@ export function BoardCanvas() {
             />
           );
         })()}
-
-        {/* helper card */}
-        {/* <div
-          style={{
-            position: "absolute",
-            left: 12,
-            bottom: 12,
-            padding: "10px 12px",
-            background: "#fff",
-            borderRadius: 10,
-            boxShadow: "0 8px 24px rgba(0,0,0,0.08)",
-            color: "#334155",
-            fontSize: 13,
-            lineHeight: 1.3,
-          }}
-        >
-          <b style={{ display: "block", marginBottom: 6 }}>Guide</b>
-          <div>• Pick a tool on the toolbar</div>
-          <div>• Drag to draw / move</div>
-          <div>• Two-finger scroll to pan</div>
-          <div>• Pinch to zoom</div>
-          <div>• ⌘/Ctrl+C/X/V, ⌫ to edit</div>
-          <div>• Double-click to add text</div>
-        </div> */}
       </div>
     </div>
   );
