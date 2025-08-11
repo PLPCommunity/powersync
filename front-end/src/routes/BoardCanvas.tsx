@@ -983,7 +983,7 @@ export function BoardCanvas() {
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <button onClick={() => navigate("/")} style={{ cursor: "pointer" }}>
+          <button onClick={() => navigate("/boards")} style={{ cursor: "pointer" }}>
             ← Back
           </button>
           <div style={{ display: "flex", gap: 8 }}>

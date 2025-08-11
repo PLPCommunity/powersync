@@ -70,7 +70,7 @@ export function HomePage() {
 
         <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
           <a
-            href="/board/new"
+            href="/boards"
             className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 px-6 py-3 text-sm font-semibold text-white shadow-sm transition hover:from-indigo-500 hover:to-purple-500"
           >
             Get Started Free
@@ -138,7 +138,7 @@ export function HomePage() {
           </p>
           <div className="mt-6">
             <a
-              href="/board/new"
+              href="/boards"
               className="inline-flex items-center gap-2 rounded-2xl bg-white px-6 py-3 text-sm font-semibold text-indigo-700 shadow-sm transition hover:bg-indigo-50"
             >
               Start Drawing Now
