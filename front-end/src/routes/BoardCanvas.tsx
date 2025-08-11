@@ -1193,20 +1193,13 @@ export function BoardCanvas() {
     <div style={{ width: "100vw", height: "100vh", display: "flex", flexDirection: "column" }}>
       {/* Top bar */}
       <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          padding: "8px 12px",
-          borderBottom: "1px solid #e5e5e5",
-          background: "#fff",
-        }}
+       className="flex justify-between py-2 px-5 bg-green-200"
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <button onClick={() => navigate("/boards")} style={{ cursor: "pointer" }}>
-            ← Back
-          </button>
-          <div style={{ display: "flex", gap: 8 }}>
+        <button onClick={() => navigate("/boards")} style={{ cursor: "pointer" }}>
+          ← Back
+        </button>
+          
+          <div  className="bg-blue-100 py-1 px-3 rounded-md" >
             {([
               ["select", "Select"],
               ["rect", "□"],
@@ -1241,7 +1234,6 @@ export function BoardCanvas() {
               </button>
             ))}
           </div>
-        </div>
         <input
           value={boardName}
           onChange={(e) => setBoardName(e.target.value)}
@@ -1362,7 +1354,7 @@ export function BoardCanvas() {
         })()}
 
         {/* helper card */}
-        <div
+        {/* <div
           style={{
             position: "absolute",
             left: 12,
@@ -1383,7 +1375,7 @@ export function BoardCanvas() {
           <div>• Pinch to zoom</div>
           <div>• ⌘/Ctrl+C/X/V, ⌫ to edit</div>
           <div>• Double-click to add text</div>
-        </div>
+        </div> */}
       </div>
     </div>
   );
