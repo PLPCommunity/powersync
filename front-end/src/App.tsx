@@ -1,5 +1,5 @@
 // src/App.tsx
-import React, { Suspense} from "react";
+// import React, { Suspense} from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 import { HomePage } from "./Components/HomePage";
 import { BoardCanvas } from "./routes/BoardCanvas";
