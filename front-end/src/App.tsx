@@ -21,7 +21,6 @@ export default function App() {
               <BoardCanvas />
           }
         />
-        {/* <Route path="/boards/:id" element={<Navigate to="/board/:id" replace />} /> */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
   );
