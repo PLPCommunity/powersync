@@ -43,6 +43,8 @@ type RectLike = {
   stroke: string;
   fill?: string;
   strokeWidth: number;
+  /** rotation in degrees (0 default) */
+  rotation?: number;
 };
 
 type LineLike = {
@@ -115,6 +117,59 @@ function isFreehand(s: Shape): s is Freehand {
   return s.type === "freehand";
 }
 
+/** ---- Rotation helpers ---- */
+function degToRad(d: number) { return (d * Math.PI) / 180; }
+function radToDeg(r: number) { return (r * 180) / Math.PI; }
+function getRotation(s: { rotation?: number }) { return degToRad(s.rotation ?? 0); }
+function getRectCenter(s: { x: number; y: number; w: number; h: number }) {
+  return { cx: s.x + s.w / 2, cy: s.y + s.h / 2 };
+}
+function rotatePoint(cx: number, cy: number, x: number, y: number, rad: number) {
+  const dx = x - cx, dy = y - cy;
+  const cos = Math.cos(rad), sin = Math.sin(rad);
+  return { x: cx + dx * cos - dy * sin, y: cy + dx * sin + dy * cos };
+}
+function toLocalOfRect(s: { x: number; y: number; w: number; h: number; rotation?: number }, x: number, y: number) {
+  const { cx, cy } = getRectCenter(s);
+  const rad = getRotation(s);
+  const dx = x - cx, dy = y - cy;
+  // inverse rotate
+  const cos = Math.cos(rad), sin = Math.sin(rad);
+  const lx = dx * cos + dy * sin;
+  const ly = -dx * sin + dy * cos;
+  const halfW = Math.abs(s.w) / 2, halfH = Math.abs(s.h) / 2;
+  return { lx, ly, halfW, halfH };
+}
+function nearlyZeroRotation(s: { rotation?: number }) {
+  const a = ((s.rotation ?? 0) % 360 + 360) % 360;
+  return a < 0.5 || Math.abs(a - 360) < 0.5;
+}
+type HandlePoint = { name: "nw" | "ne" | "sw" | "se" | "rotate"; x: number; y: number };
+
+function rectHandlesRotated(s: RectLike): HandlePoint[] {
+  const rad = getRotation(s);
+  const { cx, cy } = getRectCenter(s);
+  const left = s.x, top = s.y, right = s.x + s.w, bottom = s.y + s.h;
+
+  const corners: HandlePoint[] = ([
+    { name: "nw" as const, x: left,  y: top },
+    { name: "ne" as const, x: right, y: top },
+    { name: "sw" as const, x: left,  y: bottom },
+    { name: "se" as const, x: right, y: bottom },
+  ]).map(({ name, x, y }) => {
+    const p = rotatePoint(cx, cy, x, y, rad);
+    return { name, x: p.x, y: p.y };
+  });
+
+  const halfH = Math.abs(s.h) / 2;
+  const offset = 24;
+  const rx = cx + Math.sin(rad) * (halfH + offset);
+  const ry = cy - Math.cos(rad) * (halfH + offset);
+
+  return [...corners, { name: "rotate", x: rx, y: ry }];
+}
+
+
 /** -------------------- Component -------------------- */
 export function BoardCanvas() {
   const params = useParams();
@@ -139,6 +194,7 @@ export function BoardCanvas() {
   const isDraggingRef = useRef(false);
   const draggedShapeRef = useRef<Shape | null>(null);
   const animationFrameRef = useRef<number | null>(null);
+  const rotateRef = useRef<{ cx: number; cy: number; startAngle: number; initialDeg: number } | null>(null);
 
   // Camera (for infinite canvas)
   const cameraRef = useRef<{ tx: number; ty: number; scale: number }>({ tx: 0, ty: 0, scale: 1 });
@@ -347,86 +403,83 @@ export function BoardCanvas() {
     }
 
     if (isRectLike(s)) {
+      const rad = getRotation(s);
+      const { cx, cy } = getRectCenter(s);
+
+      ctx.save();
+      ctx.translate(cx, cy);
+      if (rad) ctx.rotate(rad);
+
+      const lx = s.x - cx;
+      const ly = s.y - cy;
+
       if (s.type === "rect") {
         if (s.fill) {
           ctx.fillStyle = s.fill;
-          ctx.fillRect(s.x, s.y, s.w, s.h);
+          ctx.fillRect(lx, ly, s.w, s.h);
         }
-        ctx.strokeRect(s.x, s.y, s.w, s.h);
-        return;
+        ctx.strokeRect(lx, ly, s.w, s.h);
+        ctx.restore(); return;
       }
       if (s.type === "ellipse" || s.type === "circle") {
         ctx.beginPath();
         const rx = s.type === "circle" ? Math.max(Math.abs(s.w / 2), Math.abs(s.h / 2)) : Math.abs(s.w / 2);
         const ry = s.type === "circle" ? rx : Math.abs(s.h / 2);
-        ctx.ellipse(s.x + s.w / 2, s.y + s.h / 2, rx, ry, 0, 0, Math.PI * 2);
+        ctx.ellipse(lx + s.w / 2, ly + s.h / 2, rx, ry, 0, 0, Math.PI * 2);
         if (s.fill) {
           ctx.fillStyle = s.fill;
           ctx.fill();
         }
-        ctx.stroke();
-        return;
+        ctx.stroke(); ctx.restore(); return;
       }
       if (s.type === "triangle") {
-        const x2 = s.x + s.w;
-        const y2 = s.y + s.h;
+        const x2 = lx + s.w;
+        const y2 = ly + s.h;
         ctx.beginPath();
-        ctx.moveTo(s.x + s.w / 2, s.y);
-        ctx.lineTo(s.x, y2);
+        ctx.moveTo(lx + s.w / 2, ly);
+        ctx.lineTo(lx, y2);
         ctx.lineTo(x2, y2);
         ctx.closePath();
         if (s.fill) {
           ctx.fillStyle = s.fill;
           ctx.fill();
         }
-        ctx.stroke();
-        return;
+        ctx.stroke(); ctx.restore(); return;
       }
       if (s.type === "diamond") {
-        const cx = s.x + s.w / 2;
-        const cy = s.y + s.h / 2;
+        const cxL = lx + s.w / 2;
+        const cyL = ly + s.h / 2;
         ctx.beginPath();
-        ctx.moveTo(cx, s.y);
-        ctx.lineTo(s.x + s.w, cy);
-        ctx.lineTo(cx, s.y + s.h);
-        ctx.lineTo(s.x, cy);
+        ctx.moveTo(cxL, ly);
+        ctx.lineTo(lx + s.w, cyL);
+        ctx.lineTo(cxL, ly + s.h);
+        ctx.lineTo(lx, cyL);
         ctx.closePath();
         if (s.fill) {
           ctx.fillStyle = s.fill;
           ctx.fill();
         }
-        ctx.stroke();
-        return;
+        ctx.stroke(); ctx.restore(); return;
       }
-      if (s.type === "cylinder") {
-        drawCylinder(ctx, s);
-        return;
-      }
-      if (s.type === "cloud") {
-        drawCloud(ctx, s);
-        return;
-      }
-      if (s.type === "callout") {
-        drawCallout(ctx, s);
-        return;
-      }
-      if (s.type === "starburst") {
-        drawStarburst(ctx, s);
-        return;
-      }
+      if (s.type === "cylinder") { drawCylinder(ctx, { ...s, x: lx, y: ly }); ctx.restore(); return; }
+      if (s.type === "cloud")    { drawCloud(ctx,    { ...s, x: lx, y: ly }); ctx.restore(); return; }
+      if (s.type === "callout")  { drawCallout(ctx,  { ...s, x: lx, y: ly }); ctx.restore(); return; }
+      if (s.type === "starburst"){ drawStarburst(ctx,{ ...s, x: lx, y: ly }); ctx.restore(); return; }
+
       if (s.type === "text") {
         const t = s as TextShape;
         ctx.font = `${t.fontSize}px ${t.fontFamily}`;
         ctx.textBaseline = "top";
         if (t.fill && t.fill !== "transparent") {
           ctx.fillStyle = t.fill;
-          ctx.fillRect(t.x, t.y, t.w || 0, t.h || t.fontSize * 1.4);
+          ctx.fillRect(lx, ly, t.w || 0, t.h || t.fontSize * 1.4);
         }
         ctx.fillStyle = t.color || "#111111";
-        ctx.fillText(t.text || "", t.x, t.y);
-        return;
+        ctx.fillText(t.text || "", lx, ly);
+        ctx.restore(); return;
       }
-      return;
+
+      ctx.restore(); return;
     }
 
     // line / arrow / arrowDouble / orthogonal
@@ -536,7 +589,6 @@ export function BoardCanvas() {
       const bry = ry * b.rr;
       if (i === 0) ctx.ellipse(bx, by, brx, bry, 0, 0, Math.PI * 2);
       else {
-        // connect smoothly by drawing arcs then relying on fill rule
         ctx.moveTo(bx + brx, by);
         ctx.ellipse(bx, by, brx, bry, 0, 0, Math.PI * 2);
       }
@@ -628,8 +680,43 @@ export function BoardCanvas() {
     ctx.setLineDash([6, 4]);
 
     if (isRectLike(s)) {
-      ctx.strokeRect(s.x - 2, s.y - 2, s.w + 4, s.h + 4);
-      for (const h of rectHandles(s)) drawHandle(ctx, h.x, h.y);
+      const rad = getRotation(s);
+      const { cx, cy } = getRectCenter(s);
+      const lx = s.x - cx, ly = s.y - cy;
+
+      ctx.translate(cx, cy);
+      if (rad) ctx.rotate(rad);
+
+      // rotated selection rect
+      ctx.strokeRect(lx - 2, ly - 2, s.w + 4, s.h + 4);
+
+      // corner handles only when rotation ≈ 0° (simpler UX)
+      ctx.setLineDash([]);
+      if (nearlyZeroRotation(s)) {
+        const corners = [
+          { x: s.x,         y: s.y },
+          { x: s.x + s.w,   y: s.y },
+          { x: s.x,         y: s.y + s.h },
+          { x: s.x + s.w,   y: s.y + s.h },
+        ];
+        for (const c of corners) {
+          // convert to local (same as subtract center, since we are rotated + translated)
+          drawHandle(ctx, c.x - cx, c.y - cy, true);
+        }
+      }
+
+      // rotate handle (above top edge)
+      const halfH = Math.abs(s.h) / 2;
+      const offset = 24;
+      // line (stem)
+      ctx.beginPath();
+      ctx.moveTo(0, -halfH);
+      ctx.lineTo(0, -halfH - offset);
+      ctx.stroke();
+      // knob
+      drawRotateHandle(ctx, 0, -halfH - offset);
+
+      ctx.restore();
     } else if (isLineLike(s)) {
       drawHandle(ctx, s.x1, s.y1);
       drawHandle(ctx, s.x2, s.y2);
@@ -641,7 +728,7 @@ export function BoardCanvas() {
     ctx.restore();
   }
 
-  function drawHandle(ctx: CanvasRenderingContext2D, x: number, y: number) {
+  function drawHandle(ctx: CanvasRenderingContext2D, x: number, y: number, _local = false) {
     const size = 6;
     ctx.fillStyle = "#ffffff";
     ctx.strokeStyle = "#3b82f6";
@@ -650,6 +737,17 @@ export function BoardCanvas() {
     ctx.rect(x - size / 2, y - size / 2, size, size);
     ctx.fill();
     ctx.stroke();
+  }
+  function drawRotateHandle(ctx: CanvasRenderingContext2D, x: number, y: number) {
+    ctx.save();
+    ctx.fillStyle = "#ffffff";
+    ctx.strokeStyle = "#3b82f6";
+    ctx.lineWidth = 1.25;
+    ctx.beginPath();
+    ctx.arc(x, y, 7, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
   }
 
   /** -------------------- Coordinate helpers -------------------- */
@@ -679,11 +777,25 @@ export function BoardCanvas() {
         resizeHandleRef.current = hit.handle;
         isDraggingRef.current = true;
         draggedShapeRef.current = JSON.parse(JSON.stringify(hit.shape)) as Shape;
+
+        // start rotation gesture
+        if (hit.handle === "rotate" && isRectLike(hit.shape)) {
+          const s = hit.shape as RectLike;
+          const { cx, cy } = getRectCenter(s);
+          rotateRef.current = {
+            cx, cy,
+            startAngle: Math.atan2(p.y - cy, p.x - cx),
+            initialDeg: s.rotation ?? 0,
+          };
+        } else {
+          rotateRef.current = null;
+        }
       } else {
         setSelectedId(null);
         resizeHandleRef.current = null;
         isDraggingRef.current = false;
         draggedShapeRef.current = null;
+        rotateRef.current = null;
       }
       return;
     }
@@ -730,6 +842,7 @@ export function BoardCanvas() {
         stroke,
         strokeWidth,
         fill: tool === "starburst" ? "#fff6" : undefined,
+        rotation: 0,
       } as RectLike;
       requestNextFrame();
       return;
@@ -774,6 +887,7 @@ export function BoardCanvas() {
       fontSize: 20,
       fontFamily: "Inter, Arial",
       color: "#111111",
+      rotation: 0,
     };
     setShapes((prev) => [...prev, base]);
     setSelectedId(id);
@@ -802,26 +916,45 @@ export function BoardCanvas() {
       let updated: Shape = JSON.parse(JSON.stringify(draggedShapeRef.current)) as Shape;
 
       if (resizeHandleRef.current) {
+        // rotation gesture
+        if (resizeHandleRef.current === "rotate" && isRectLike(updated)) {
+          const rot = rotateRef.current;
+          if (rot) {
+            const angNow = Math.atan2(p.y - rot.cy, p.x - rot.cx);
+            let deltaDeg = radToDeg(angNow - rot.startAngle);
+            let nextDeg = (rot.initialDeg ?? 0) + deltaDeg;
+            if (e.shiftKey) nextDeg = Math.round(nextDeg / 15) * 15; // snap
+            (updated as RectLike).rotation = ((nextDeg % 360) + 360) % 360;
+            draggedShapeRef.current = updated;
+            mutatedDuringDragRef.current = true;
+            requestNextFrame();
+            return;
+          }
+        }
+
         // resizing
         if (isRectLike(updated)) {
           let { x, y, w, h } = updated;
-          if (resizeHandleRef.current.includes("n")) {
-            const newY = y + dy;
-            h = h - dy;
-            y = newY;
+          // Only allow classic axis-aligned resize when rotation is nearly zero
+          if (nearlyZeroRotation(updated)) {
+            if (resizeHandleRef.current.includes("n")) {
+              const newY = y + dy;
+              h = h - dy;
+              y = newY;
+            }
+            if (resizeHandleRef.current.includes("s")) h = h + dy;
+            if (resizeHandleRef.current.includes("w")) {
+              const newX = x + dx;
+              w = w - dx;
+              x = newX;
+            }
+            if (resizeHandleRef.current.includes("e")) w = w + dx;
+            const norm = normalizeRect({ x, y, w, h });
+            (updated as RectLike).x = norm.x;
+            (updated as RectLike).y = norm.y;
+            (updated as RectLike).w = norm.w;
+            (updated as RectLike).h = norm.h;
           }
-          if (resizeHandleRef.current.includes("s")) h = h + dy;
-          if (resizeHandleRef.current.includes("w")) {
-            const newX = x + dx;
-            w = w - dx;
-            x = newX;
-          }
-          if (resizeHandleRef.current.includes("e")) w = w + dx;
-          const norm = normalizeRect({ x, y, w, h });
-          (updated as RectLike).x = norm.x;
-          (updated as RectLike).y = norm.y;
-          (updated as RectLike).w = norm.w;
-          (updated as RectLike).h = norm.h;
         } else if (isLineLike(updated)) {
           if (resizeHandleRef.current === "start") {
             (updated as LineLike).x1 += dx;
@@ -846,10 +979,10 @@ export function BoardCanvas() {
         } else if (isFreehand(updated)) {
           updated.points = updated.points.map((pt) => ({ x: pt.x + dx, y: pt.y + dy }));
           updated.bbox = {
-            x: updated.bbox.x + dx,
-            y: updated.bbox.y + dy,
-            w: updated.bbox.w,
-            h: updated.bbox.h,
+            x: (updated as Freehand).bbox.x + dx,
+            y: (updated as Freehand).bbox.y + dy,
+            w: (updated as Freehand).bbox.w,
+            h: (updated as Freehand).bbox.h,
           };
         }
       }
@@ -907,7 +1040,7 @@ export function BoardCanvas() {
       draftShapeRef.current = null;
     }
 
-    // end dragging
+    // end dragging / rotation
     if (isDraggingRef.current && draggedShapeRef.current && mutatedDuringDragRef.current) {
       const finalShape = draggedShapeRef.current;
       const originalShape = shapes.find((s) => s.id === finalShape.id);
@@ -925,6 +1058,7 @@ export function BoardCanvas() {
     resizeHandleRef.current = null;
     dragStartRef.current = null;
     mutatedDuringDragRef.current = false;
+    rotateRef.current = null;
   }
 
   /** -------------------- Hit test + helpers -------------------- */
@@ -951,9 +1085,22 @@ export function BoardCanvas() {
         continue;
       }
       if (isRectLike(s)) {
-        const handle = rectHandles(s).find((h) => Math.abs(h.x - x) <= 6 && Math.abs(h.y - y) <= 6);
-        if (handle) return { shape: s, handle: handle.name as string } as any;
-        if (x >= s.x && x <= s.x + s.w && y >= s.y && y <= s.y + s.h) return { shape: s, handle: null };
+        // rotate handle (always)
+        const rh = rectHandlesRotated(s).find(h => h.name === "rotate")!;
+        if (distance(x, y, rh.x, rh.y) <= 8) return { shape: s, handle: "rotate" };
+
+        // corner handles only when rotation ≈ 0°
+        if (nearlyZeroRotation(s)) {
+          const corners = rectHandlesRotated(s).filter(h => h.name !== "rotate");
+          const hitCorner = corners.find(h => Math.abs(h.x - x) <= 6 && Math.abs(h.y - y) <= 6);
+          if (hitCorner) return { shape: s, handle: hitCorner.name };
+        }
+
+        // body hit: inverse-rotate to local, then box test
+        const loc = toLocalOfRect(s, x, y);
+        if (Math.abs(loc.lx) <= loc.halfW && Math.abs(loc.ly) <= loc.halfH) {
+          return { shape: s, handle: null };
+        }
       } else {
         const l = s as LineLike;
         // endpoints
@@ -1041,7 +1188,7 @@ export function BoardCanvas() {
     const offset = 16;
     if (isRectLike(s)) {
       const base = s as RectLike | TextShape;
-      return { ...base, id, x: base.x + offset, y: base.y + offset } as Shape;
+      return { ...base, id, x: (base as RectLike).x + offset, y: (base as RectLike).y + offset } as Shape;
     } else if (isLineLike(s)) {
       const l = s as LineLike;
       return { ...l, id, x1: l.x1 + offset, y1: l.y1 + offset, x2: l.x2 + offset, y2: l.y2 + offset } as Shape;
@@ -1192,48 +1339,46 @@ export function BoardCanvas() {
   return (
     <div style={{ width: "100vw", height: "100vh", display: "flex", flexDirection: "column" }}>
       {/* Top bar */}
-      <div
-       className="flex justify-between py-2 px-5 bg-green-200"
-      >
+      <div className="flex justify-between py-2 px-5 bg-green-200">
         <button onClick={() => navigate("/boards")} style={{ cursor: "pointer" }}>
           ← Back
         </button>
-          
-          <div  className="bg-blue-100 py-1 px-3 rounded-md" >
-            {([
-              ["select", "Select"],
-              ["rect", "□"],
-              ["ellipse", "◯"],
-              ["circle", "●"],
-              ["diamond", "◇"],
-              ["triangle", "△"],
-              ["line", "─"],
-              ["arrow", "→"],
-              ["arrowDouble", "⇄"],
-              ["orthogonal", "└"],
-              ["cylinder", "DB"],
-              ["cloud", "☁︎"],
-              ["callout", "💬"],
-              ["starburst", "✷"],
-              ["text", "T"],
-              ["freehand", "✎"],
-            ] as [Tool, string][]).map(([t, label]) => (
-              <button
-                key={t}
-                onClick={() => setTool(t)}
-                style={{
-                  padding: "6px 10px",
-                  borderRadius: 6,
-                  border: "none",
-                  background: tool === t ? "#eff6ff" : "transparent",
-                  cursor: "pointer",
-                }}
-                title={t}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
+
+        <div className="bg-blue-100 py-1 px-3 rounded-md">
+          {([
+            ["select", "Select"],
+            ["rect", "□"],
+            ["ellipse", "◯"],
+            ["circle", "●"],
+            ["diamond", "◇"],
+            ["triangle", "△"],
+            ["line", "─"],
+            ["arrow", "→"],
+            ["arrowDouble", "⇄"],
+            ["orthogonal", "└"],
+            ["cylinder", "DB"],
+            ["cloud", "☁︎"],
+            ["callout", "💬"],
+            ["starburst", "✷"],
+            ["text", "T"],
+            ["freehand", "✎"],
+          ] as [Tool, string][]).map(([t, label]) => (
+            <button
+              key={t}
+              onClick={() => setTool(t)}
+              style={{
+                padding: "6px 10px",
+                borderRadius: 6,
+                border: "none",
+                background: tool === t ? "#eff6ff" : "transparent",
+                cursor: "pointer",
+              }}
+              title={t}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
         <input
           value={boardName}
           onChange={(e) => setBoardName(e.target.value)}
@@ -1299,6 +1444,47 @@ export function BoardCanvas() {
                   />
                 ))}
               </div>
+
+              {isRectLike(sel) && (
+                <label style={{ display: "flex", alignItems: "center", gap: 6, marginLeft: 12 }}>
+                  <span>Angle°</span>
+                  <input
+                    type="number"
+                    step={1}
+                    value={(sel as RectLike).rotation ?? 0}
+                    onChange={(e) => {
+                      let v = Number(e.target.value) || 0;
+                      v = ((v % 360) + 360) % 360;
+                      const props = { rotation: v } as Partial<Shape>;
+                      setShapes((prev) => prev.map((s) => (s.id === selectedId ? ({ ...s, ...props } as Shape) : s)));
+                      socketRef.current?.emit("shape-update", { boardId, shapeId: selectedId, props });
+                    }}
+                    style={{ width: 72 }}
+                  />
+                  <button
+                    onClick={() => {
+                      const curr = (sel as RectLike).rotation ?? 0;
+                      const v = ((curr - 15 + 360) % 360);
+                      const props = { rotation: v } as Partial<Shape>;
+                      setShapes((prev) => prev.map((s) => (s.id === selectedId ? ({ ...s, ...props } as Shape) : s)));
+                      socketRef.current?.emit("shape-update", { boardId, shapeId: selectedId, props });
+                    }}
+                    style={{ padding: "2px 8px", border: "1px solid #e5e7eb", borderRadius: 6 }}
+                    title="Rotate -15°"
+                  >↶ 15°</button>
+                  <button
+                    onClick={() => {
+                      const curr = (sel as RectLike).rotation ?? 0;
+                      const v = ((curr + 15) % 360);
+                      const props = { rotation: v } as Partial<Shape>;
+                      setShapes((prev) => prev.map((s) => (s.id === selectedId ? ({ ...s, ...props } as Shape) : s)));
+                      socketRef.current?.emit("shape-update", { boardId, shapeId: selectedId, props });
+                    }}
+                    style={{ padding: "2px 8px", border: "1px solid #e5e7eb", borderRadius: 6 }}
+                    title="Rotate +15°"
+                  >↷ 15°</button>
+                </label>
+              )}
             </div>
           );
         })()}
