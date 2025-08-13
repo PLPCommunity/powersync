@@ -1398,17 +1398,18 @@ export function BoardCanvas() {
           };
           return (
             <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                padding: 8,
-                borderBottom: "1px dashed #cbd5e1",
-                flexWrap: "wrap",
-                background: "#fff",
-              }}
+            className="bg-white flex justify-center mx-auto gap-4 my-2 "
+              // style={{
+              //   display: "flex",
+              //   alignItems: "center",
+              //   gap: 8,
+              //   padding: 8,
+              //   borderBottom: "1px dashed #cbd5e1",
+              //   flexWrap: "wrap",
+              //   background: "#fff",
+              // }}
             >
-              <span style={{ opacity: 0.7 }}>Selected: {(sel as any).type}</span>
+              <span className="mt-1">Selected: {(sel as any).type}</span>
               <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 <span>Width</span>
                 <input
