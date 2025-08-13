@@ -5,6 +5,7 @@ import { HomePage } from "./Components/HomePage";
 import { BoardCanvas } from "./routes/BoardCanvas";
 import AllBoards from "./Components/AllBoards";
 import './App.css';
+import("preline");
 
 // const BoardCanvas = lazy(() => import("./components/BoardCanvas"));
 

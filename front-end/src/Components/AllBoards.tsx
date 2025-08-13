@@ -4,6 +4,9 @@ import { useNavigate } from "react-router-dom";
 import {
   Plus, MoreVertical, FileText, Calendar, Search, Trash2, Copy, Edit3, ExternalLink
 } from "lucide-react";
+import { useSelector } from "react-redux";
+import {  selectUser } from "../features/userSlice";
+import Login from "../Components/Login"
 
 type Board = { _id: string; name: string; description?: string; createdAt?: string; updatedAt?: string };
 const API_BASE = (import.meta as any).env?.VITE_API_BASE || "http://localhost:5000";
@@ -15,6 +18,7 @@ export default function AllBoards() {
   const [isCreating, setIsCreating] = useState(false);
   const [query, setQuery] = useState("");
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const user = useSelector(selectUser)
 
   useEffect(() => {
     let alive = true;
@@ -115,6 +119,7 @@ export default function AllBoards() {
 
   return (
     <main className="min-h-screen bg-slate-50">
+      {!user ? <><Login/></> : <>
       <div className="mx-auto w-full max-w-6xl px-6 py-6">
         <div className="flex items-center justify-between">
           <div>
@@ -170,6 +175,7 @@ export default function AllBoards() {
           </ul>
         )}
       </section>
+      </> }
     </main>
   );
 }

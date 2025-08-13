@@ -10,6 +10,7 @@ import {
   Users,
 } from "lucide-react";
 import { Link } from "react-router-dom";
+import Login from "../Components/Login"
 
 export function HomePage() {
   return (
@@ -24,12 +25,12 @@ export function HomePage() {
 
       {/* Header */}
       <header className="mx-auto flex w-full max-w-7xl items-center justify-between px-6 py-5">
-        <div className="flex items-center gap-3">
+        <Link to="/" className="flex items-center gap-3">
           <div className="grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-br from-indigo-500 to-purple-500 text-white shadow-sm">
             <PencilRuler className="h-5 w-5" />
           </div>
           <span className="text-lg font-semibold tracking-tight">Diagramr</span>
-        </div>
+        </Link>
         <nav className="hidden items-center gap-6 md:flex">
           <a href="#features" className="text-sm text-slate-600 hover:text-slate-900">
             Features
@@ -41,14 +42,16 @@ export function HomePage() {
             FAQ
           </a>
         </nav>
+        {/* <Login/> */}
         <div className="flex items-center gap-3">
-          <a
+        <Login/>
+          {/* <a
             href="/board/new"
             className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:from-indigo-500 hover:to-purple-500"
           >
             Get Started
             <ArrowRight className="h-4 w-4" />
-          </a>
+          </a> */}
         </div>
       </header>
 

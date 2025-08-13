@@ -1,14 +1,17 @@
 import { useEffect } from "react";
-import CloseOutlinedIcon from "@mui/icons-material/CloseOutlined";
+// import CloseOutlinedIcon from "@mui/icons-material/CloseOutlined";
 // import googleIcon from "../assets/google-icon.png";
 import { auth, gitProvider, provider } from "../utils/firebase";
 import { useDispatch, useSelector } from "react-redux";
 import { login, logout, selectUser } from "../features/userSlice";
 // import GitHubIcon from "@mui/icons-material/GitHub";
+import { useNavigate } from "react-router-dom";
+import { ArrowRight } from "lucide-react";
 
 const Login = () => {
   const dispatch = useDispatch();
   const user = useSelector(selectUser);
+  const navigate = useNavigate();
 
   // SIGN IN WITH GOOGLE
 
@@ -25,6 +28,7 @@ const Login = () => {
       })
       .then(() => {
         window.location.reload(false);
+        navigate("/boards");
       })
       .catch((error) => {
         alert(error.message);
@@ -77,10 +81,14 @@ const Login = () => {
     <main>
       <button
         type="button"
-        className="bg-pink-600 border border-pink-600 hover:bg-transparent rounded-full py-2 px-8 text-white hover:text-pink-600"
+        onClick={() => {
+          console.log("Hello world");
+        }}
+        className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:from-indigo-500 hover:to-purple-500 cursor-pointer"
         data-hs-overlay="#hs-static-backdrop-modal"
       >
-        Sign up
+        Get Started
+        <ArrowRight className="h-4 w-4" />
       </button>
       <div
         id="hs-static-backdrop-modal"
