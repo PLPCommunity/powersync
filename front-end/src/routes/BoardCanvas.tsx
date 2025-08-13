@@ -650,7 +650,7 @@ export function BoardCanvas() {
   }
 
   function drawStarburst(ctx: CanvasRenderingContext2D, r: RectLike) {
-    const spikes = 16; // change for more/less spikes
+    const spikes = 16;
     const cx = r.x + r.w / 2;
     const cy = r.y + r.h / 2;
     const R = Math.hypot(r.w / 2, r.h / 2) * 0.95;
