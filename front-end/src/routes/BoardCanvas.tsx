@@ -1383,6 +1383,8 @@ export function BoardCanvas() {
           onChange={(e) => setBoardName(e.target.value)}
           placeholder="Untitled document"
           style={{ border: "none", fontSize: 16, textAlign: "right", outline: "none" }}
+          className="font-semibold"
+
         />
       </div>
 
