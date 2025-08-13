@@ -74,22 +74,6 @@ const Login = () => {
     return unsubscribe;
   }, [dispatch]);
 
-  // useEffect(() => {
-  //   auth.onAuthStateChanged((userAuth) => {
-  //     if (userAuth) {
-  //       dispatch(
-  //         login({
-  //           email: userAuth.email,
-  //           uid: userAuth.uid,
-  //           displayName: userAuth.displayName,
-  //         })
-  //       );
-  //     } else {
-  //       dispatch(logout);
-  //     }
-  //   });
-  // }, [dispatch]);
-
   return (
     <main>
       <button
