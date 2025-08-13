@@ -2,6 +2,10 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { io, Socket } from "socket.io-client";
+import Login from "../Components/Login"
+import { useSelector } from "react-redux";
+import {  selectUser } from "../features/userSlice";
+
 
 /** -------------------- Types -------------------- */
 type ShapeType =
@@ -175,6 +179,7 @@ export function BoardCanvas() {
   const params = useParams();
   const boardId = params.id!;
   const navigate = useNavigate();
+  const user = useSelector(selectUser)
 
   const [boardName, setBoardName] = useState("Untitled document");
   const [tool, setTool] = useState<Tool>("select");
@@ -1336,6 +1341,9 @@ export function BoardCanvas() {
 
   return (
     <div style={{ width: "100vw", height: "100vh", display: "flex", flexDirection: "column" }}>
+
+{!user ? <><Login/></> : <>
+      
       {/* Top bar */}
       <div className="flex justify-between py-2 px-5 bg-green-200">
         <button className="hover:bg-pink-600 px-4 rounded-md hover:text-white font-bold" onClick={() => navigate("/boards")} style={{ cursor: "pointer" }}>
@@ -1540,6 +1548,7 @@ export function BoardCanvas() {
           );
         })()}
       </div>
+      </>}
     </div>
   );
 
