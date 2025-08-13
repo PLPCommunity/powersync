@@ -1302,7 +1302,6 @@ export function BoardCanvas() {
         cam.tx = screenX - worldBefore.x * newScale;
         cam.ty = screenY - worldBefore.y * newScale;
       } else {
-        // pan
         cam.tx -= e.deltaX;
         cam.ty -= e.deltaY;
       }
