@@ -14,6 +14,7 @@
     "@tailwindcss/vite": "^4.1.7",
     "firebase": "^12.1.0",
     "lucide-react": "^0.539.0",
+    "preline": "^3.2.3",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-redux": "^9.2.0",

@@ -96,7 +96,7 @@ const Login = () => {
                 className="hs-dropdown-toggle inline-flex flex-shrink-0 justify-center items-center h-8 w-8 rounded-md text-gray-500 hover:text-gray-400 transition-all text-sm"
                 data-hs-overlay="#hs-static-backdrop-modal"
               >
-                <CloseOutlinedIcon className="w-20" />
+                {/* <CloseOutlinedIcon className="w-20" /> */}X
               </button>
             </div>
 
