@@ -1,11 +1,10 @@
 import { useEffect } from "react";
 import CloseOutlinedIcon from "@mui/icons-material/CloseOutlined";
-import googleIcon from "../assets/google-icon.png";
-import { auth, db, gitProvider, provider } from "../utils/firebase";
+// import googleIcon from "../assets/google-icon.png";
+import { auth, gitProvider, provider } from "../utils/firebase";
 import { useDispatch, useSelector } from "react-redux";
 import { login, logout, selectUser } from "../features/userSlice";
-import GitHubIcon from "@mui/icons-material/GitHub";
-import { doc, setDoc, getDoc } from "firebase/firestore";
+// import GitHubIcon from "@mui/icons-material/GitHub";
 
 const Login = () => {
   const dispatch = useDispatch();
@@ -111,14 +110,14 @@ const Login = () => {
                   onClick={googleSignIn}
                   className="flex items-center justify-center mx-auto w-full text-yellow-600 border border-gray-500 rounded-full cursor-pointer mt-4"
                 >
-                  <img src={googleIcon} className="w-12" alt="" />
+                  {/* <img src={googleIcon} className="w-12" alt="" /> */}
                   <p className="">Sign up with Google </p>
                 </div>
                 <div
                   onClick={githubSignUp}
                   className="flex items-center justify-center font-serif mx-auto w-full p-2 border border-gray-500 rounded-full cursor-pointer mt-4"
                 >
-                  <GitHubIcon className="w-24" />
+                  {/* <GitHubIcon className="w-24" /> */}
                   <p className="ml-5 ">Sign up with GitHub </p>
                 </div>
               </section>
