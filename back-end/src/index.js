@@ -11,7 +11,6 @@ const app  = express();
 const srv  = http.createServer(app);
 const io   = new Server(srv, { cors: { origin: '*' } });
 
-// Middleware
 app.use(cors());
 app.use(express.json());
 
@@ -24,7 +23,7 @@ mongoose.connect(process.env.MONGO_URI, { useNewUrlParser: true, useUnifiedTopol
   .catch(err => console.error('❌ MongoDB error:', err));
 
 // Example REST route
-app.get('/api/ping', (req, res) => res.json({ msg: 'pong' }));
+app.get('/api/ping', ( res) => res.json({ msg: 'pong' }));
 
 app.use('/api/boards', boardsRouter);
 
