@@ -1339,7 +1339,7 @@ export function BoardCanvas() {
     <div style={{ width: "100vw", height: "100vh", display: "flex", flexDirection: "column" }}>
       {/* Top bar */}
       <div className="flex justify-between py-2 px-5 bg-green-200">
-        <button className="hover:bg-pink-600 px-4 rounded-md" onClick={() => navigate("/boards")} style={{ cursor: "pointer" }}>
+        <button className="hover:bg-pink-600 px-4 rounded-md hover:text-white font-bold" onClick={() => navigate("/boards")} style={{ cursor: "pointer" }}>
           ← Back
         </button>
 
