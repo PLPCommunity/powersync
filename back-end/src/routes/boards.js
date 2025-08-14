@@ -28,15 +28,24 @@ router.post('/', async (req, res) => {
 });
 
 // List boards
-router.get('/', async (_req, res) => {
+router.get('/', async (req, res) => {
   try {
-    const boards = await Board.find({}).sort({ createdAt: -1 });
+    const boards = await Board.find({ ownerId: req.user.uid }).sort({ createdAt: -1 });
     return res.json(boards);
   } catch (error) {
     return res.status(500).json({ message: 'Failed to fetch boards', error: error.message });
   }
 });
-
+// Get one (must own)
+router.get('/:id', async (req, res) => {
+  try {
+    const board = await Board.findOne({ _id: req.params.id, ownerId: req.user.uid });
+    if (!board) return res.status(404).json({ message: 'Board not found' });
+    return res.json(board);
+  } catch (error) {
+    return res.status(500).json({ message: 'Failed to fetch board', error: error.message });
+  }
+});
 // Get a single board by id
 router.get('/:id', async (req, res) => {
   try {
@@ -49,13 +58,19 @@ router.get('/:id', async (req, res) => {
 });
 
 // Update board basic fields (e.g., name)
+// Update basic fields (owner only)
 router.put('/:id', async (req, res) => {
   try {
     const { name, description } = req.body;
     const update = {};
     if (typeof name === 'string') update.name = name.trim() || 'Untitled document';
     if (typeof description === 'string') update.description = description.trim();
-    const board = await Board.findByIdAndUpdate(req.params.id, update, { new: true });
+
+    const board = await Board.findOneAndUpdate(
+      { _id: req.params.id, ownerId: req.user.uid },
+      update,
+      { new: true }
+    );
     if (!board) return res.status(404).json({ message: 'Board not found' });
     return res.json(board);
   } catch (error) {
