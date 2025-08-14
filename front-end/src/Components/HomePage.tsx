@@ -35,7 +35,7 @@ export function HomePage() {
           <a href="#features" className="text-sm text-slate-600 hover:text-slate-900">
             Features
           </a>
-          <a href="#pricing" className="text-sm text-slate-600 hover:text-slate-900">
+          <a href="https://progskill.com" target="_blank" className="text-sm text-slate-600 hover:text-slate-900">
             Learn Coding
           </a>
           <a href="#faq" className="text-sm text-slate-600 hover:text-slate-900">
