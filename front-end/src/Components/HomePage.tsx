@@ -36,7 +36,7 @@ export function HomePage() {
             Features
           </a>
           <a href="#pricing" className="text-sm text-slate-600 hover:text-slate-900">
-            Pricing
+            Learn Coding
           </a>
           <a href="#faq" className="text-sm text-slate-600 hover:text-slate-900">
             FAQ
