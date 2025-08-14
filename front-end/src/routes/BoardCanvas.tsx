@@ -1342,9 +1342,10 @@ export function BoardCanvas() {
   }, []);
 
   return (
+    <main className="">
     <div style={{ width: "100vw", height: "100vh", display: "flex", flexDirection: "column" }}>
 
-{/* { */}
+
       
       {/* Top bar */}
       <div className="flex justify-between py-2 px-5 bg-green-200">
@@ -1551,6 +1552,7 @@ export function BoardCanvas() {
         })()}
       </div>
     </div>
+    </main>
   );
 
   /** -------------------- Text editor finalize -------------------- */

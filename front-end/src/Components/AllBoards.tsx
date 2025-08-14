@@ -22,9 +22,12 @@ type Board = {
   description?: string;
   createdAt?: string;
   updatedAt?: string;
+  ownerId?: string;
+  ownerName?: string;
+  ownerEmail?: string;
 };
-const API_BASE =
-  (import.meta as any).env?.VITE_API_BASE || "http://localhost:5000";
+
+const API_BASE = (import.meta as any).env?.VITE_API_BASE || "http://localhost:5000";
 
 export default function AllBoards() {
   const navigate = useNavigate();
@@ -33,31 +36,79 @@ export default function AllBoards() {
   const [isCreating, setIsCreating] = useState(false);
   const [query, setQuery] = useState("");
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
-  const user = useSelector(selectUser);
 
+  // 🔐 This should be your Firebase user object stored in Redux
+  const user = useSelector(selectUser) as any | null;
+
+  // Helper: get Firebase ID token when user is logged in
+  async function getToken(): Promise<string | null> {
+    try {
+      if (!user) return null;
+      // If using Firebase v9 modular, the user has getIdToken()
+      if (typeof user.getIdToken === "function") {
+        return await user.getIdToken();
+      }
+      // Some wrappers store token at user.accessToken
+      return user.accessToken ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  // Helper: authorized headers
+  async function authHeaders(json = true) {
+    const token = await getToken();
+    const h: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+    if (json) h["Content-Type"] = "application/json";
+    return h;
+  }
+
+  // Upsert user on server whenever we log in
+  useEffect(() => {
+    (async () => {
+      if (!user) {
+        setBoards([]);
+        setLoading(false);
+        return;
+      }
+      try {
+        const headers = await authHeaders(true);
+        await fetch(`${API_BASE}/api/users/sync`, { method: "POST", headers });
+      } catch {
+        // ignore
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.uid]);
+
+  // Load only *my* boards
   useEffect(() => {
     let alive = true;
     (async () => {
+      if (!user) {
+        setLoading(false);
+        return;
+      }
       try {
-        const r = await fetch(`${API_BASE}/api/boards`);
+        const headers = await authHeaders(false);
+        const r = await fetch(`${API_BASE}/api/boards`, { headers });
         const data = await r.json();
         if (alive) setBoards(Array.isArray(data) ? data : []);
+      } catch {
+        if (alive) setBoards([]);
       } finally {
         if (alive) setLoading(false);
       }
     })();
-    return () => {
-      alive = false;
-    };
-  }, []);
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.uid]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return boards;
     return boards.filter(
-      (b) =>
-        b.name?.toLowerCase().includes(q) ||
-        b.description?.toLowerCase().includes(q)
+      (b) => b.name?.toLowerCase().includes(q) || b.description?.toLowerCase().includes(q)
     );
   }, [boards, query]);
 
@@ -65,17 +116,16 @@ export default function AllBoards() {
     if (isCreating) return;
     setIsCreating(true);
     try {
+      const headers = await authHeaders(true);
       const res = await fetch(`${API_BASE}/api/boards`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({ name: "Untitled document" }),
       });
       const created = await res.json();
       if (res.ok && created?._id) {
-        // Optionally update local list so it appears when user navigates back
         setBoards((prev) => [{ ...created }, ...prev]);
-        // ✅ Navigate to the new board (SINGULAR route)
-        navigate(`/board/${created._id}`);
+        navigate(`/board/${created._id}`); // open the new one
       } else {
         alert(created?.message || "Failed to create board");
       }
@@ -88,13 +138,12 @@ export default function AllBoards() {
     const current = boards.find((b) => b._id === id);
     const next = prompt("Rename board:", current?.name ?? "Untitled document");
     if (next == null || !next.trim()) return;
-    setBoards((prev) =>
-      prev.map((b) => (b._id === id ? { ...b, name: next.trim() } : b))
-    );
+    setBoards((prev) => prev.map((b) => (b._id === id ? { ...b, name: next.trim() } : b)));
     try {
+      const headers = await authHeaders(true);
       await fetch(`${API_BASE}/api/boards/${id}`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({ name: next.trim() }),
       });
     } catch {}
@@ -104,14 +153,15 @@ export default function AllBoards() {
     const src = boards.find((b) => b._id === id);
     const name = src?.name ? `${src.name} (Copy)` : "Untitled document (Copy)";
     try {
+      const headers = await authHeaders(true);
       const res = await fetch(`${API_BASE}/api/boards`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({ name, description: src?.description ?? "" }),
       });
       const created = await res.json();
       if (res.ok) setBoards((prev) => [{ ...created }, ...prev]);
-      else alert("Failed to duplicate");
+      else alert(created?.message || "Failed to duplicate");
     } catch {}
   }
 
@@ -123,13 +173,12 @@ export default function AllBoards() {
     setBoards((p) => p.filter((b) => b._id !== id)); // optimistic
 
     try {
-      const res = await fetch(
-        `${API_BASE}/api/boards/${encodeURIComponent(id)}`,
-        { method: "DELETE" }
-      );
-      const payload = (res.headers.get("content-type") || "").includes(
-        "application/json"
-      )
+      const headers = await authHeaders(false);
+      const res = await fetch(`${API_BASE}/api/boards/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+        headers,
+      });
+      const payload = (res.headers.get("content-type") || "").includes("application/json")
         ? await res.json().catch(() => null)
         : null;
 
@@ -150,18 +199,12 @@ export default function AllBoards() {
           <header className="mx-auto flex max-w-6xl items-center justify-between px-6 py-5">
             <Link to="/" className="flex items-center gap-3">
               <div className="grid h-9 w-9 place-items-center rounded-xl bg-slate-900 text-white">
-                {/* simple lock icon */}
-                <svg
-                  viewBox="0 0 24 24"
-                  className="h-5 w-5"
-                  fill="currentColor"
-                >
+                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="currentColor">
                   <path d="M17 8h-1V6a4 4 0 10-8 0v2H7a2 2 0 00-2 2v8a2 2 0 002 2h10a2 2 0 002-2v-8a2 2 0 00-2-2zm-7-2a2 2 0 114 0v2H10V6zm8 12H6v-8h12v8z" />
                 </svg>
               </div>
               <span className="text-lg font-semibold">DrawBoard</span>
             </Link>
-
             <nav className="hidden gap-6 text-sm md:flex">
               <span className="text-slate-500">Features</span>
               <span className="text-slate-500">Pricing</span>
@@ -169,44 +212,28 @@ export default function AllBoards() {
             </nav>
           </header>
 
-          {/* <Login/> */}
           <main className="mx-auto max-w-6xl px-6 pb-24 pt-10 md:pt-16">
             <section className="mx-auto max-w-3xl text-center">
               <h1 className="text-3xl font-extrabold tracking-tight text-slate-900 sm:text-4xl md:text-5xl">
                 Sign in to start drawing together
               </h1>
               <p className="mx-auto mt-4 max-w-2xl text-base leading-7 text-slate-600 md:text-lg">
-                A clean, collaborative canvas for sketches, flowcharts, and
-                ideas. Create boards, invite teammates, and bring plans to
-                life—fast.
+                A clean, collaborative canvas for sketches, flowcharts, and ideas. Create boards, invite teammates, and bring plans to life—fast.
               </p>
-
-              {/* CTA row (no functionality—just text/buttons) */}
               <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
                 <Login />
               </div>
-
-              {/* Helper text */}
-              <p className="mt-3 text-xs text-slate-500">
-                No credit card needed • Cancel anytime
-              </p>
+              <p className="mt-3 text-xs text-slate-500">No credit card needed • Cancel anytime</p>
             </section>
           </main>
+
           <footer className="border-t border-slate-200">
             <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-3 px-6 py-6 text-xs text-slate-500 sm:flex-row">
-              <span>
-                © {new Date().getFullYear()} DrawBoard. All rights reserved.
-              </span>
+              <span>© {new Date().getFullYear()} DrawBoard. All rights reserved.</span>
               <div className="flex items-center gap-4">
-                <a href="#" className="hover:text-slate-700">
-                  Privacy
-                </a>
-                <a href="#" className="hover:text-slate-700">
-                  Terms
-                </a>
-                <a href="#" className="hover:text-slate-700">
-                  Status
-                </a>
+                <a href="#" className="hover:text-slate-700">Privacy</a>
+                <a href="#" className="hover:text-slate-700">Terms</a>
+                <a href="#" className="hover:text-slate-700">Status</a>
               </div>
             </div>
           </footer>
@@ -216,9 +243,7 @@ export default function AllBoards() {
           <div className="mx-auto w-full max-w-6xl px-6 py-6">
             <div className="flex items-center justify-between">
               <div>
-                <h1 className="text-3xl font-extrabold tracking-tight text-slate-900">
-                  My Boards
-                </h1>
+                <h1 className="text-3xl font-extrabold tracking-tight text-slate-900">My Boards</h1>
                 <p className="mt-1 text-sm text-slate-500">
                   {boards.length} {boards.length === 1 ? "board" : "boards"}
                 </p>
@@ -258,9 +283,7 @@ export default function AllBoards() {
                     <BoardCard
                       board={b}
                       onOpen={() => navigate(`/board/${b._id}`)}
-                      onOpenNewTab={() =>
-                        window.open(`/board/${b._id}`, "_blank")
-                      }
+                      onOpenNewTab={() => window.open(`/board/${b._id}`, "_blank")}
                       onRename={() => renameBoard(b._id)}
                       onDuplicate={() => duplicateBoard(b._id)}
                       onDelete={() => deleteBoard(b._id)}
@@ -293,13 +316,9 @@ function BoardCard({
   const gradient = useMemo(() => gradientFromId(board._id), [board._id]);
   function gradientFromId(id: string): [string, string] {
     let hash = 0;
-    for (let i = 0; i < id.length; i++)
-      hash = (hash * 31 + id.charCodeAt(i)) | 0;
-
+    for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) | 0;
     const hue1 = (hash >>> 0) % 360;
     const hue2 = (hue1 + 30 + ((hash >>> 8) % 60)) % 360;
-
-    // Pastel-ish: high saturation, high lightness
     const c1 = `hsl(${hue1}, 92%, 88%)`;
     const c2 = `hsl(${hue2}, 92%, 80%)`;
     return [c1, c2];
@@ -308,17 +327,13 @@ function BoardCard({
   return (
     <div
       onClick={onOpen}
-      // remove overflow-hidden so the menu isn't clipped; bump z-index when menu is open
       className={`group relative cursor-pointer rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${
         openMenuId === board._id ? "z-50" : ""
       }`}
     >
-      {/* Preview header with proper gradient + rounded top */}
       <div
         className="relative h-28 w-full rounded-t-2xl"
-        style={{
-          background: `linear-gradient(135deg, ${gradient[0]}, ${gradient[1]})`,
-        }}
+        style={{ background: `linear-gradient(135deg, ${gradient[0]}, ${gradient[1]})` }}
       >
         <div className="absolute inset-0 grid place-items-center text-slate-600/70">
           <div className="grid h-10 w-10 place-items-center rounded-xl bg-white/70 shadow-sm backdrop-blur">
@@ -334,19 +349,13 @@ function BoardCard({
               {board.name || "Untitled document"}
             </h3>
             {board.description ? (
-              <p className="mt-1 line-clamp-2 text-sm text-slate-600">
-                {board.description}
-              </p>
+              <p className="mt-1 line-clamp-2 text-sm text-slate-600">{board.description}</p>
             ) : (
               <p className="mt-1 text-sm text-slate-400">—</p>
             )}
           </div>
 
-          {/* Keep clicks here from opening the card */}
-          <div
-            className="relative flex items-center gap-1"
-            onClick={(e) => e.stopPropagation()}
-          >
+          <div className="relative flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
             <button
               aria-label="delete board"
               onClick={onDelete}
@@ -355,43 +364,22 @@ function BoardCard({
             >
               <Trash2 className="h-5 w-5" />
             </button>
-
             <button
               aria-label="board menu"
-              onClick={() =>
-                setOpenMenuId(openMenuId === board._id ? null : board._id)
-              }
-              className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-700  cursor-pointer"
+              onClick={() => setOpenMenuId(openMenuId === board._id ? null : board._id)}
+              className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-700 cursor-pointer"
               title="More"
             >
               <MoreVertical className="h-5 w-5" />
             </button>
 
-            {/* Dropdown */}
             {openMenuId === board._id && (
               <div className="absolute right-0 top-9 z-50 mt-1 w-48 overflow-hidden rounded-xl border border-slate-200 bg-white/95 py-1 text-sm shadow-2xl backdrop-blur-md">
-                <MenuItem
-                  icon={<ExternalLink className="h-4 w-4" />}
-                  label="Open in new tab"
-                  onClick={onOpenNewTab}
-                />
-                <MenuItem
-                  icon={<Edit3 className="h-4 w-4" />}
-                  label="Rename"
-                  onClick={onRename}
-                />
-                <MenuItem
-                  icon={<Copy className="h-4 w-4" />}
-                  label="Duplicate"
-                  onClick={onDuplicate}
-                />
+                <MenuItem icon={<ExternalLink className="h-4 w-4" />} label="Open in new tab" onClick={onOpenNewTab} />
+                <MenuItem icon={<Edit3 className="h-4 w-4" />} label="Rename" onClick={onRename} />
+                <MenuItem icon={<Copy className="h-4 w-4" />} label="Duplicate" onClick={onDuplicate} />
                 <div className="my-1 border-t border-slate-200" />
-                <MenuItem
-                  icon={<Trash2 className="h-4 w-4" />}
-                  label="Delete"
-                  danger
-                  onClick={onDelete}
-                />
+                <MenuItem icon={<Trash2 className="h-4 w-4" />} label="Delete" danger onClick={onDelete} />
               </div>
             )}
           </div>
@@ -419,9 +407,5 @@ function MenuItem({ icon, label, onClick, danger }: any) {
     </button>
   );
 }
-function SkeletonGrid() {
-  return null as any;
-}
-function EmptyState({ onCreate }: { onCreate: () => void }) {
-  return null as any;
-}
+function SkeletonGrid() { return null as any; }
+function EmptyState({ onCreate }: { onCreate: () => void }) { return null as any; }
