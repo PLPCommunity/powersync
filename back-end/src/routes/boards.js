@@ -1,16 +1,26 @@
 const express = require('express');
 const Board = require('../models/Board');
+const { verifyFirebase } = require('../middleware/auth');
 
 const router = express.Router();
+router.use(verifyFirebase);
 
 // Create a new board
+
 router.post('/', async (req, res) => {
   try {
     const { name, description } = req.body;
     if (!name || !name.trim()) {
       return res.status(400).json({ message: 'Board name is required' });
     }
-    const board = await Board.create({ name: name.trim(), description: description?.trim() || '' });
+    const board = await Board.create({
+      name: name.trim(),
+      description: description?.trim() || '',
+      ownerId: req.user.uid,
+      ownerName: req.user.name || '',
+      ownerEmail: req.user.email || '',
+      shapes: [],
+    });
     return res.status(201).json(board);
   } catch (error) {
     return res.status(500).json({ message: 'Failed to create board', error: error.message });
