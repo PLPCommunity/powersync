@@ -1,12 +1,10 @@
-// routes/users.js
 const express = require('express');
 const { verifyFirebase } = require('../middleware/auth');
 const User = require('../models/User');
 
 const router = express.Router();
 
-// Upsert the user document based on Firebase token
-
+// Create/Update the signed-in user's profile in Mongo
 router.post('/sync', verifyFirebase, async (req, res) => {
   try {
     const { uid, name, email, picture, provider } = req.user;
@@ -15,9 +13,9 @@ router.post('/sync', verifyFirebase, async (req, res) => {
       { uid, name, email, photoURL: picture, provider },
       { new: true, upsert: true, setDefaultsOnInsert: true }
     );
-    res.json(user);
+    return res.json(user);
   } catch (e) {
-    res.status(500).json({ message: 'Failed to sync user', error: e.message });
+    return res.status(500).json({ message: 'Failed to sync user', error: e.message });
   }
 });
 
