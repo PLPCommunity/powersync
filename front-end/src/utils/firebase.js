@@ -8,13 +8,13 @@ import { getPerformance } from "firebase/performance";
 // import { getPerformance } from "firebase/performance";
 
 const firebaseApp = firebase.initializeApp({
-  apiKey: "AIzaSyDGPbi61TNV7Rp1sbTJQYx_wYw62Zb5NXQ",
-  authDomain: "cryptolearn-6f81b.firebaseapp.com",
-  projectId: "cryptolearn-6f81b",
-  storageBucket: "cryptolearn-6f81b.appspot.com",
-  messagingSenderId: "742531451792",
-  appId: "1:742531451792:web:80cfb191d5842d2be9c115",
-  measurementId: "G-XQJNVH2X3K",
+  apiKey: "AIzaSyBqRGfNOCRA06URvZ8VD8Ny8paPTpuqCfw",
+  authDomain: "mentorship-74ad7.firebaseapp.com",
+  projectId: "mentorship-74ad7",
+  storageBucket: "mentorship-74ad7.firebasestorage.app",
+  messagingSenderId: "1035391211182",
+  appId: "1:1035391211182:web:304c3b302b4433b8593f3f",
+  measurementId: "G-LQ9EKJ7347"
 });
 
 const analytics = getAnalytics(firebaseApp);

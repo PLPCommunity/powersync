@@ -78,7 +78,7 @@ const Login = () => {
   }, [dispatch]);
 
   return (
-    <main>
+    <main className="">
       <button
         type="button"
         onClick={() => {
