@@ -101,8 +101,9 @@ const Login = () => {
               <h3 className="font-bold text-gray-900">Progskill</h3>
               <button
                 type="button"
-                className="hs-dropdown-toggle inline-flex flex-shrink-0 justify-center items-center h-8 w-8 rounded-md text-gray-500 hover:text-gray-400 transition-all text-sm"
+                className="hs-dropdown-toggle inline-flex flex-shrink-0 justify-center items-center h-8 w-8 rounded-md text-gray-500 hover:text-gray-400 transition-all text-sm cursor-pointer"
                 data-hs-overlay="#hs-static-backdrop-modal"
+                onClick={() => window.location.reload()}
               >
                 {/* <CloseOutlinedIcon className="w-20" /> */}X
               </button>

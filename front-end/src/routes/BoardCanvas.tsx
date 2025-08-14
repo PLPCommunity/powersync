@@ -1344,79 +1344,7 @@ export function BoardCanvas() {
   return (
     <div style={{ width: "100vw", height: "100vh", display: "flex", flexDirection: "column" }}>
 
-{!user ? <main>
-  <header className="mx-auto flex max-w-6xl items-center justify-between px-6 py-5">
-        <div className="flex items-center gap-3">
-          <div className="grid h-9 w-9 place-items-center rounded-xl bg-slate-900 text-white">
-            {/* simple lock icon */}
-            <svg viewBox="0 0 24 24" className="h-5 w-5" fill="currentColor">
-              <path d="M17 8h-1V6a4 4 0 10-8 0v2H7a2 2 0 00-2 2v8a2 2 0 002 2h10a2 2 0 002-2v-8a2 2 0 00-2-2zm-7-2a2 2 0 114 0v2H10V6zm8 12H6v-8h12v8z" />
-            </svg>
-          </div>
-          <span className="text-lg font-semibold">DrawBoard</span>
-        </div>
-
-        <nav className="hidden gap-6 text-sm md:flex">
-          <span className="text-slate-500">Features</span>
-          <span className="text-slate-500">Pricing</span>
-          <span className="text-slate-500">Docs</span>
-        </nav>
-      </header>
-  
-  <Login/>
-  <main className="mx-auto max-w-6xl px-6 pb-24 pt-10 md:pt-16">
-        <section className="mx-auto max-w-3xl text-center">
-          <h1 className="text-3xl font-extrabold tracking-tight text-slate-900 sm:text-4xl md:text-5xl">
-            Sign in to start drawing together
-          </h1>
-          <p className="mx-auto mt-4 max-w-2xl text-base leading-7 text-slate-600 md:text-lg">
-            A clean, collaborative canvas for sketches, flowcharts, and ideas.
-            Create boards, invite teammates, and bring plans to life—fast.
-          </p>
-
-          {/* CTA row (no functionality—just text/buttons) */}
-          <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
-            <button
-              type="button"
-              onClick={() => {
-                console.log("Hello world");
-              }}
-              className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:from-indigo-500 hover:to-purple-500 cursor-pointer"
-              data-hs-overlay="#hs-static-backdrop-modal"
-            >
-              Get Started
-              <ArrowRight className="h-4 w-4" />
-            </button>
-          </div>
-
-          {/* Helper text */}
-          <p className="mt-3 text-xs text-slate-500">
-            No credit card needed • Cancel anytime
-          </p>
-        </section>
-      </main>
-      <footer className="border-t border-slate-200">
-        <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-3 px-6 py-6 text-xs text-slate-500 sm:flex-row">
-          <span>
-            © {new Date().getFullYear()} DrawBoard. All rights reserved.
-          </span>
-          <div className="flex items-center gap-4">
-            <a href="#" className="hover:text-slate-700">
-              Privacy
-            </a>
-            <a href="#" className="hover:text-slate-700">
-              Terms
-            </a>
-            <a href="#" className="hover:text-slate-700">
-              Status
-            </a>
-          </div>
-        </div>
-      </footer>
-  
-  
-  
-  </main> : <>
+{/* { */}
       
       {/* Top bar */}
       <div className="flex justify-between py-2 px-5 bg-green-200">
@@ -1622,7 +1550,6 @@ export function BoardCanvas() {
           );
         })()}
       </div>
-      </>}
     </div>
   );
 

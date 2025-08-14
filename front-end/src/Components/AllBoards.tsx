@@ -1,6 +1,6 @@
 // src/components/AllBoards.tsx
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import {
   Plus,
   MoreVertical,
@@ -15,7 +15,6 @@ import {
 import { useSelector } from "react-redux";
 import { selectUser } from "../features/userSlice";
 import Login from "../Components/Login";
-import { ArrowRight } from "lucide-react";
 
 type Board = {
   _id: string;
@@ -149,7 +148,7 @@ export default function AllBoards() {
       {!user ? (
         <main>
           <header className="mx-auto flex max-w-6xl items-center justify-between px-6 py-5">
-            <div className="flex items-center gap-3">
+            <Link to="/" className="flex items-center gap-3">
               <div className="grid h-9 w-9 place-items-center rounded-xl bg-slate-900 text-white">
                 {/* simple lock icon */}
                 <svg
@@ -161,7 +160,7 @@ export default function AllBoards() {
                 </svg>
               </div>
               <span className="text-lg font-semibold">DrawBoard</span>
-            </div>
+            </Link>
 
             <nav className="hidden gap-6 text-sm md:flex">
               <span className="text-slate-500">Features</span>
