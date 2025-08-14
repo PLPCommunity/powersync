@@ -15,6 +15,10 @@ const BoardSchema = new mongoose.Schema(
       default: '',
       maxlength: 500,
     },
+    // / 🔐 ownership
+    ownerId: { type: String, required: true, index: true },    // Firebase uid
+    ownerName: { type: String, default: '' },
+    ownerEmail: { type: String, default: '', index: true },
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
@@ -28,6 +32,8 @@ const BoardSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+
 
 // Clear any existing model to avoid conflicts
 if (mongoose.models.Board) {
