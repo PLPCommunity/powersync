@@ -16,6 +16,7 @@ app.use(express.json());
 
 // Routes
 const boardsRouter = require('./routes/boards');
+const usersRouter  = require('./routes/users');
 
 // Connect MongoDB
 mongoose.connect(process.env.MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true })
@@ -26,6 +27,7 @@ mongoose.connect(process.env.MONGO_URI, { useNewUrlParser: true, useUnifiedTopol
 app.get('/api/ping', ( res) => res.json({ msg: 'pong' }));
 
 app.use('/api/boards', boardsRouter);
+app.use('/api/users', usersRouter);
 
 // Socket.io handlers
 io.on('connection', socket => {

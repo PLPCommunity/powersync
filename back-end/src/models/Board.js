@@ -35,6 +35,7 @@ const BoardSchema = new mongoose.Schema(
 
 
 
+
 // Clear any existing model to avoid conflicts
 if (mongoose.models.Board) {
   delete mongoose.models.Board;
