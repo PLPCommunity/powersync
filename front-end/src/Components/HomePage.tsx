@@ -15,7 +15,6 @@ import Login from "../Components/Login"
 export function HomePage() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-indigo-50/60 via-white to-white text-slate-800">
-      {/* Decorative background blob */}
       <div
         aria-hidden
         className="pointer-events-none fixed inset-0 -z-10 overflow-hidden"
