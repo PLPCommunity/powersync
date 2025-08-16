@@ -1,5 +1,5 @@
 // src/components/AllBoards.tsx
-import { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
   Plus,
@@ -12,9 +12,12 @@ import {
   Edit3,
   ExternalLink,
 } from "lucide-react";
-import { useSelector } from "react-redux";
-import { selectUser } from "../features/userSlice";
+
+// 👇 import your compat firebase file (exact path may differ in your project)
+import { auth } from "../utils/firebase";
 import Login from "../Components/Login";
+
+/* ----------------------------- Types & Config ----------------------------- */
 
 type Board = {
   _id: string;
@@ -22,110 +25,136 @@ type Board = {
   description?: string;
   createdAt?: string;
   updatedAt?: string;
-  ownerId?: string;
-  ownerName?: string;
-  ownerEmail?: string;
 };
 
-const API_BASE = (import.meta as any).env?.VITE_API_BASE || "http://localhost:5000";
+const API_BASE =
+  ((import.meta as any).env?.VITE_API_BASE as string) || "http://localhost:5000";
+
+/* --------------------------------- Helpers -------------------------------- */
+
+function useFirebaseUser() {
+  const [currentUser, setCurrentUser] = useState<firebase.User | null>(
+    auth.currentUser
+  );
+  useEffect(() => {
+    const unsub = auth.onAuthStateChanged((u) => setCurrentUser(u));
+    return () => unsub();
+  }, []);
+  return currentUser;
+}
+
+// Tiny inline helper (no separate file) to attach Authorization header.
+async function authHeader() {
+  const u = auth.currentUser;
+  if (!u) return {};
+  const token = await u.getIdToken();
+  return { Authorization: `Bearer ${token}` };
+}
+
+function gradientFromId(id: string): [string, string] {
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) | 0;
+  const hue1 = (hash >>> 0) % 360;
+  const hue2 = (hue1 + 30 + ((hash >>> 8) % 60)) % 360;
+  const c1 = `hsl(${hue1}, 92%, 88%)`;
+  const c2 = `hsl(${hue2}, 92%, 80%)`;
+  return [c1, c2];
+}
+
+function fmtDate(s?: string) {
+  if (!s) return "—";
+  try {
+    const d = new Date(s);
+    return d.toLocaleString();
+  } catch {
+    return s;
+  }
+}
+
+/* -------------------------------- Component ------------------------------- */
 
 export default function AllBoards() {
   const navigate = useNavigate();
+  const currentUser = useFirebaseUser();
+
   const [boards, setBoards] = useState<Board[]>([]);
   const [loading, setLoading] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
   const [query, setQuery] = useState("");
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
 
-  // 🔐 This should be your Firebase user object stored in Redux
-  const user = useSelector(selectUser) as any | null;
-
-  // Helper: get Firebase ID token when user is logged in
-  async function getToken(): Promise<string | null> {
-    try {
-      if (!user) return null;
-      // If using Firebase v9 modular, the user has getIdToken()
-      if (typeof user.getIdToken === "function") {
-        return await user.getIdToken();
-      }
-      // Some wrappers store token at user.accessToken
-      return user.accessToken ?? null;
-    } catch {
-      return null;
-    }
-  }
-
-  // Helper: authorized headers
-  async function authHeaders(json = true) {
-    const token = await getToken();
-    const h: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
-    if (json) h["Content-Type"] = "application/json";
-    return h;
-  }
-
-  // Upsert user on server whenever we log in
-  useEffect(() => {
-    (async () => {
-      if (!user) {
-        setBoards([]);
-        setLoading(false);
-        return;
-      }
-      try {
-        const headers = await authHeaders(true);
-        await fetch(`${API_BASE}/api/users/sync`, { method: "POST", headers });
-      } catch {
-        // ignore
-      }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.uid]);
-
-  // Load only *my* boards
+  // Sync user profile on sign-in and load my boards
   useEffect(() => {
     let alive = true;
+
     (async () => {
-      if (!user) {
-        setLoading(false);
-        return;
-      }
       try {
-        const headers = await authHeaders(false);
-        const r = await fetch(`${API_BASE}/api/boards`, { headers });
-        const data = await r.json();
-        if (alive) setBoards(Array.isArray(data) ? data : []);
+        if (!currentUser) {
+          if (alive) {
+            setBoards([]);
+            setLoading(false);
+          }
+          return;
+        }
+
+        // Upsert this user in your backend (requires /api/users/sync route)
+        await fetch(`${API_BASE}/api/users/sync`, {
+          method: "POST",
+          headers: await authHeader(),
+        });
+
+        // Fetch my boards (backend scopes by ownerId via verifyFirebase)
+        const res = await fetch(`${API_BASE}/api/boards`, {
+          headers: await authHeader(),
+        });
+        const data = await res.json();
+        if (alive) {
+          setBoards(Array.isArray(data) ? data : []);
+          setLoading(false);
+        }
       } catch {
-        if (alive) setBoards([]);
-      } finally {
         if (alive) setLoading(false);
       }
     })();
-    return () => { alive = false; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.uid]);
+
+    // Close dropdown when clicking outside
+    const onDocClick = () => setOpenMenuId(null);
+    document.addEventListener("click", onDocClick);
+
+    return () => {
+      alive = false;
+      document.removeEventListener("click", onDocClick);
+    };
+  }, [currentUser]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return boards;
     return boards.filter(
-      (b) => b.name?.toLowerCase().includes(q) || b.description?.toLowerCase().includes(q)
+      (b) =>
+        b.name?.toLowerCase().includes(q) ||
+        b.description?.toLowerCase().includes(q)
     );
   }, [boards, query]);
+
+  /* --------------------------------- Actions -------------------------------- */
 
   async function createBoardAndOpen() {
     if (isCreating) return;
     setIsCreating(true);
     try {
-      const headers = await authHeaders(true);
       const res = await fetch(`${API_BASE}/api/boards`, {
         method: "POST",
-        headers,
+        headers: {
+          "Content-Type": "application/json",
+          ...(await authHeader()),
+        },
         body: JSON.stringify({ name: "Untitled document" }),
       });
       const created = await res.json();
       if (res.ok && created?._id) {
-        setBoards((prev) => [{ ...created }, ...prev]);
-        navigate(`/board/${created._id}`); // open the new one
+        setBoards((prev) => [created, ...prev]);
+        navigate(`/board/${created._id}`); // SINGULAR route
       } else {
         alert(created?.message || "Failed to create board");
       }
@@ -138,31 +167,41 @@ export default function AllBoards() {
     const current = boards.find((b) => b._id === id);
     const next = prompt("Rename board:", current?.name ?? "Untitled document");
     if (next == null || !next.trim()) return;
-    setBoards((prev) => prev.map((b) => (b._id === id ? { ...b, name: next.trim() } : b)));
+    const name = next.trim();
+
+    setBoards((prev) => prev.map((b) => (b._id === id ? { ...b, name } : b)));
     try {
-      const headers = await authHeaders(true);
       await fetch(`${API_BASE}/api/boards/${id}`, {
         method: "PUT",
-        headers,
-        body: JSON.stringify({ name: next.trim() }),
+        headers: {
+          "Content-Type": "application/json",
+          ...(await authHeader()),
+        },
+        body: JSON.stringify({ name }),
       });
-    } catch {}
+    } catch {
+      // no-op
+    }
   }
 
   async function duplicateBoard(id: string) {
     const src = boards.find((b) => b._id === id);
     const name = src?.name ? `${src.name} (Copy)` : "Untitled document (Copy)";
     try {
-      const headers = await authHeaders(true);
       const res = await fetch(`${API_BASE}/api/boards`, {
         method: "POST",
-        headers,
+        headers: {
+          "Content-Type": "application/json",
+          ...(await authHeader()),
+        },
         body: JSON.stringify({ name, description: src?.description ?? "" }),
       });
       const created = await res.json();
-      if (res.ok) setBoards((prev) => [{ ...created }, ...prev]);
+      if (res.ok) setBoards((prev) => [created, ...prev]);
       else alert(created?.message || "Failed to duplicate");
-    } catch {}
+    } catch {
+      // no-op
+    }
   }
 
   async function deleteBoard(id: string) {
@@ -171,19 +210,16 @@ export default function AllBoards() {
 
     const prev = boards;
     setBoards((p) => p.filter((b) => b._id !== id)); // optimistic
-
     try {
-      const headers = await authHeaders(false);
       const res = await fetch(`${API_BASE}/api/boards/${encodeURIComponent(id)}`, {
         method: "DELETE",
-        headers,
+        headers: await authHeader(),
       });
-      const payload = (res.headers.get("content-type") || "").includes("application/json")
-        ? await res.json().catch(() => null)
-        : null;
-
       if (!res.ok) {
-        setBoards(prev); // revert for 5xx/other errors
+        const payload = (res.headers.get("content-type") || "").includes("application/json")
+          ? await res.json().catch(() => null)
+          : null;
+        setBoards(prev);
         alert(payload?.message || `Failed to delete (HTTP ${res.status})`);
       }
     } catch (e: any) {
@@ -192,116 +228,123 @@ export default function AllBoards() {
     }
   }
 
-  return (
-    <main className="min-h-screen bg-slate-50">
-      {!user ? (
-        <main>
-          <header className="mx-auto flex max-w-6xl items-center justify-between px-6 py-5">
-            <Link to="/" className="flex items-center gap-3">
-              <div className="grid h-9 w-9 place-items-center rounded-xl bg-slate-900 text-white">
-                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="currentColor">
-                  <path d="M17 8h-1V6a4 4 0 10-8 0v2H7a2 2 0 00-2 2v8a2 2 0 002 2h10a2 2 0 002-2v-8a2 2 0 00-2-2zm-7-2a2 2 0 114 0v2H10V6zm8 12H6v-8h12v8z" />
-                </svg>
-              </div>
-              <span className="text-lg font-semibold">DrawBoard</span>
-            </Link>
-            <nav className="hidden gap-6 text-sm md:flex">
-              <span className="text-slate-500">Features</span>
-              <span className="text-slate-500">Pricing</span>
-              <span className="text-slate-500">Docs</span>
-            </nav>
-          </header>
+  /* ----------------------------------- UI ----------------------------------- */
 
-          <main className="mx-auto max-w-6xl px-6 pb-24 pt-10 md:pt-16">
-            <section className="mx-auto max-w-3xl text-center">
-              <h1 className="text-3xl font-extrabold tracking-tight text-slate-900 sm:text-4xl md:text-5xl">
-                Sign in to start drawing together
-              </h1>
-              <p className="mx-auto mt-4 max-w-2xl text-base leading-7 text-slate-600 md:text-lg">
-                A clean, collaborative canvas for sketches, flowcharts, and ideas. Create boards, invite teammates, and bring plans to life—fast.
-              </p>
-              <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
-                <Login />
-              </div>
-              <p className="mt-3 text-xs text-slate-500">No credit card needed • Cancel anytime</p>
-            </section>
-          </main>
-
-          <footer className="border-t border-slate-200">
-            <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-3 px-6 py-6 text-xs text-slate-500 sm:flex-row">
-              <span>© {new Date().getFullYear()} DrawBoard. All rights reserved.</span>
-              <div className="flex items-center gap-4">
-                <a href="#" className="hover:text-slate-700">Privacy</a>
-                <a href="#" className="hover:text-slate-700">Terms</a>
-                <a href="#" className="hover:text-slate-700">Status</a>
-              </div>
+  // If not signed in, show your simple landing with a Login button
+  if (!currentUser) {
+    return (
+      <main className="min-h-screen bg-slate-50">
+        <header className="mx-auto flex max-w-6xl items-center justify-between px-6 py-5">
+          <Link to="/" className="flex items-center gap-3">
+            <div className="grid h-9 w-9 place-items-center rounded-xl bg-slate-900 text-white">
+              <svg viewBox="0 0 24 24" className="h-5 w-5" fill="currentColor">
+                <path d="M17 8h-1V6a4 4 0 10-8 0v2H7a2 2 0 00-2 2v8a2 2 0 002 2h10a2 2 0 002-2v-8a2 2 0 00-2-2zm-7-2a2 2 0 114 0v2H10V6zm8 12H6v-8h12v8z" />
+              </svg>
             </div>
-          </footer>
+            <span className="text-lg font-semibold">DrawBoard</span>
+          </Link>
+          <nav className="hidden gap-6 text-sm md:flex">
+            <span className="text-slate-500">Features</span>
+            <span className="text-slate-500">Pricing</span>
+            <span className="text-slate-500">Docs</span>
+          </nav>
+        </header>
+
+        <main className="mx-auto max-w-6xl px-6 pb-24 pt-10 md:pt-16">
+          <section className="mx-auto max-w-3xl text-center">
+            <h1 className="text-3xl font-extrabold tracking-tight text-slate-900 sm:text-4xl md:text-5xl">
+              Sign in to start drawing together
+            </h1>
+            <p className="mx-auto mt-4 max-w-2xl text-base leading-7 text-slate-600 md:text-lg">
+              A clean, collaborative canvas for sketches, flowcharts, and ideas.
+              Create boards, invite teammates, and bring plans to life—fast.
+            </p>
+            <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
+              <Login />
+            </div>
+            <p className="mt-3 text-xs text-slate-500">
+              No credit card needed • Cancel anytime
+            </p>
+          </section>
         </main>
-      ) : (
-        <>
-          <div className="mx-auto w-full max-w-6xl px-6 py-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <h1 className="text-3xl font-extrabold tracking-tight text-slate-900">My Boards</h1>
-                <p className="mt-1 text-sm text-slate-500">
-                  {boards.length} {boards.length === 1 ? "board" : "boards"}
-                </p>
-              </div>
-              <button
-                onClick={createBoardAndOpen}
-                disabled={isCreating}
-                className="inline-flex items-center gap-2 rounded-xl bg-purple-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer"
-              >
-                <Plus className="h-4 w-4" />
-                {isCreating ? "Creating…" : "New Board"}
-              </button>
-            </div>
 
-            <div className="mt-6">
-              <div className="relative">
-                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                <input
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Search boards..."
-                  className="w-full rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm text-slate-800 outline-none focus:border-slate-300"
-                />
-              </div>
+        <footer className="border-t border-slate-200">
+          <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-3 px-6 py-6 text-xs text-slate-500 sm:flex-row">
+            <span>© {new Date().getFullYear()} DrawBoard. All rights reserved.</span>
+            <div className="flex items-center gap-4">
+              <a href="#" className="hover:text-slate-700">Privacy</a>
+              <a href="#" className="hover:text-slate-700">Terms</a>
+              <a href="#" className="hover:text-slate-700">Status</a>
             </div>
           </div>
+        </footer>
+      </main>
+    );
+  }
 
-          <section className="mx-auto w-full max-w-6xl px-6 pb-16">
-            {loading ? (
-              <SkeletonGrid />
-            ) : filtered.length === 0 ? (
-              <EmptyState onCreate={createBoardAndOpen} />
-            ) : (
-              <ul className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-                {filtered.map((b) => (
-                  <li key={b._id}>
-                    <BoardCard
-                      board={b}
-                      onOpen={() => navigate(`/board/${b._id}`)}
-                      onOpenNewTab={() => window.open(`/board/${b._id}`, "_blank")}
-                      onRename={() => renameBoard(b._id)}
-                      onDuplicate={() => duplicateBoard(b._id)}
-                      onDelete={() => deleteBoard(b._id)}
-                      openMenuId={openMenuId}
-                      setOpenMenuId={setOpenMenuId}
-                    />
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
-        </>
-      )}
+  // Authenticated view
+  return (
+    <main className="min-h-screen bg-slate-50">
+      <div className="mx-auto w-full max-w-6xl px-6 py-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-extrabold tracking-tight text-slate-900">My Boards</h1>
+            <p className="mt-1 text-sm text-slate-500">
+              {boards.length} {boards.length === 1 ? "board" : "boards"}
+            </p>
+          </div>
+          <button
+            onClick={createBoardAndOpen}
+            disabled={isCreating}
+            className="cursor-pointer inline-flex items-center gap-2 rounded-xl bg-purple-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <Plus className="h-4 w-4" />
+            {isCreating ? "Creating…" : "New Board"}
+          </button>
+        </div>
+
+        <div className="mt-6">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search boards..."
+              className="w-full rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm text-slate-800 outline-none focus:border-slate-300"
+            />
+          </div>
+        </div>
+      </div>
+
+      <section className="mx-auto w-full max-w-6xl px-6 pb-16">
+        {loading ? (
+          <SkeletonGrid />
+        ) : filtered.length === 0 ? (
+          <EmptyState onCreate={createBoardAndOpen} />
+        ) : (
+          <ul className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+            {filtered.map((b) => (
+              <li key={b._id}>
+                <BoardCard
+                  board={b}
+                  onOpen={() => navigate(`/board/${b._id}`)}
+                  onOpenNewTab={() => window.open(`/board/${b._id}`, "_blank")}
+                  onRename={() => renameBoard(b._id)}
+                  onDuplicate={() => duplicateBoard(b._id)}
+                  onDelete={() => deleteBoard(b._id)}
+                  openMenuId={openMenuId}
+                  setOpenMenuId={setOpenMenuId}
+                />
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
     </main>
   );
 }
 
-/* ---- subcomponents (unchanged visually) ---- */
+/* ------------------------------- Subcomponents ------------------------------ */
 
 function BoardCard({
   board,
@@ -314,15 +357,9 @@ function BoardCard({
   setOpenMenuId,
 }: any) {
   const gradient = useMemo(() => gradientFromId(board._id), [board._id]);
-  function gradientFromId(id: string): [string, string] {
-    let hash = 0;
-    for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) | 0;
-    const hue1 = (hash >>> 0) % 360;
-    const hue2 = (hue1 + 30 + ((hash >>> 8) % 60)) % 360;
-    const c1 = `hsl(${hue1}, 92%, 88%)`;
-    const c2 = `hsl(${hue2}, 92%, 80%)`;
-    return [c1, c2];
-  }
+
+  // Stop card open when clicking inside the action area
+  const stop = (e: React.MouseEvent) => e.stopPropagation();
 
   return (
     <div
@@ -331,6 +368,7 @@ function BoardCard({
         openMenuId === board._id ? "z-50" : ""
       }`}
     >
+      {/* Preview header with gradient and rounded top */}
       <div
         className="relative h-28 w-full rounded-t-2xl"
         style={{ background: `linear-gradient(135deg, ${gradient[0]}, ${gradient[1]})` }}
@@ -355,19 +393,20 @@ function BoardCard({
             )}
           </div>
 
-          <div className="relative flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+          <div className="relative flex items-center gap-1" onClick={stop}>
             <button
               aria-label="delete board"
               onClick={onDelete}
-              className="rounded-lg p-1.5 text-slate-500 hover:bg-red-50 hover:text-red-600 cursor-pointer"
+              className="cursor-pointer rounded-lg p-1.5 text-slate-500 hover:bg-red-50 hover:text-red-600"
               title="Delete"
             >
               <Trash2 className="h-5 w-5" />
             </button>
+
             <button
               aria-label="board menu"
               onClick={() => setOpenMenuId(openMenuId === board._id ? null : board._id)}
-              className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-700 cursor-pointer"
+              className="cursor-pointer rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-700"
               title="More"
             >
               <MoreVertical className="h-5 w-5" />
@@ -387,7 +426,7 @@ function BoardCard({
 
         <div className="mt-3 flex items-center gap-2 text-xs text-slate-500">
           <Calendar className="h-3.5 w-3.5" />
-          <span>{board.updatedAt || board.createdAt}</span>
+          <span>{fmtDate(board.updatedAt || board.createdAt)}</span>
         </div>
       </div>
     </div>
@@ -407,5 +446,39 @@ function MenuItem({ icon, label, onClick, danger }: any) {
     </button>
   );
 }
-function SkeletonGrid() { return null as any; }
-function EmptyState({ onCreate }: { onCreate: () => void }) { return null as any; }
+
+function SkeletonGrid() {
+  return (
+    <ul className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+      {Array.from({ length: 6 }).map((_, i) => (
+        <li key={i} className="animate-pulse rounded-2xl border border-slate-200 bg-white">
+          <div className="h-28 rounded-t-2xl bg-slate-100" />
+          <div className="space-y-2 p-4">
+            <div className="h-4 w-1/2 rounded bg-slate-100" />
+            <div className="h-3 w-2/3 rounded bg-slate-100" />
+          </div>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function EmptyState({ onCreate }: { onCreate: () => void }) {
+  return (
+    <div className="grid place-items-center rounded-2xl border border-dashed border-slate-300 bg-white py-16 text-center">
+      <div className="mx-auto max-w-sm">
+        <h3 className="text-lg font-semibold text-slate-900">No boards yet</h3>
+        <p className="mt-1 text-sm text-slate-600">
+          Create your first board to start sketching, diagramming, and collaborating.
+        </p>
+        <button
+          onClick={onCreate}
+          className="mt-4 inline-flex items-center gap-2 rounded-xl bg-purple-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-purple-700"
+        >
+          <Plus className="h-4 w-4" />
+          New Board
+        </button>
+      </div>
+    </div>
+  );
+}
