@@ -2,36 +2,36 @@
 const admin = require('../firebaseAdmin');
 
 /**
- * Verifies Firebase ID token in:
- *  - Authorization: Bearer <token>
- *  - OR cookie named __session
+ * Accept either:
+ * - Firebase Session Cookie in req.cookies.__session  -> verifySessionCookie
+ * - Firebase ID token in Authorization: Bearer <token> -> verifyIdToken
  */
 async function verifyFirebase(req, res, next) {
   try {
-    let idToken = null;
+    const hdr = req.get('Authorization') || '';
+    const bearer = hdr.startsWith('Bearer ') ? hdr.slice(7) : null;
+    const sessionCookie = req.cookies && req.cookies.__session;
 
-    const hdr = req.headers.authorization || '';
-    if (hdr.startsWith('Bearer ')) {
-      idToken = hdr.slice('Bearer '.length).trim();
-    } else if (req.cookies && req.cookies.__session) {
-      idToken = req.cookies.__session;
+    let decoded = null;
+    if (sessionCookie) {
+      // Don't set checkRevoked to true unless you really need it
+      decoded = await admin.auth().verifySessionCookie(sessionCookie /*, true */);
+    } else if (bearer) {
+      decoded = await admin.auth().verifyIdToken(bearer /*, true */);
+    } else {
+      return res.status(401).json({ message: 'Missing auth token' });
     }
 
-    if (!idToken) {
-      return res.status(401).json({ message: 'Missing Firebase ID token' });
-    }
-
-    const decoded = await admin.auth().verifyIdToken(idToken);
-    // Attach user info for downstream routes
     req.user = {
       uid: decoded.uid,
       email: decoded.email || '',
-      name: decoded.name || decoded.displayName || '',
+      name: decoded.name || '',
       picture: decoded.picture || '',
+      claims: decoded,
     };
     next();
   } catch (e) {
-    return res.status(401).json({ message: 'Invalid/expired Firebase token' });
+    return res.status(401).json({ message: 'Invalid/expired Firebase token', error: e.message });
   }
 }
 
