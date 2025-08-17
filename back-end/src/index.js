@@ -53,22 +53,41 @@ function baseCookieOptions() {
   };
 }
 
+// app.post('/api/sessionLogin', async (req, res) => {
+//   try {
+//     const { idToken } = req.body || {};
+//     if (!idToken) return res.status(400).json({ message: 'idToken is required' });
+
+//     // Optional: verify to fail fast
+//     await admin.auth().verifyIdToken(idToken);
+
+//     const expiresIn = 5 * 24 * 60 * 60 * 1000; // 5 days
+//     const sessionCookie = await admin.auth().createSessionCookie(idToken, { expiresIn });
+//     res.cookie(SESSION_COOKIE_NAME, sessionCookie, { ...baseCookieOptions(), maxAge: expiresIn });
+//     return res.json({ ok: true });
+//   } catch (e) {
+//     return res.status(401).json({ message: 'Invalid idToken', error: e.message });
+//   }
+// });
 app.post('/api/sessionLogin', async (req, res) => {
   try {
     const { idToken } = req.body || {};
     if (!idToken) return res.status(400).json({ message: 'idToken is required' });
 
-    // Optional: verify to fail fast
-    await admin.auth().verifyIdToken(idToken);
+    // This throws with a detailed reason if invalid
+    const decoded = await admin.auth().verifyIdToken(idToken);
+    console.log('Decoded token OK:', { uid: decoded.uid, aud: decoded.aud, iss: decoded.iss });
 
-    const expiresIn = 5 * 24 * 60 * 60 * 1000; // 5 days
+    const expiresIn = 5 * 24 * 60 * 60 * 1000;
     const sessionCookie = await admin.auth().createSessionCookie(idToken, { expiresIn });
-    res.cookie(SESSION_COOKIE_NAME, sessionCookie, { ...baseCookieOptions(), maxAge: expiresIn });
+    res.cookie('__session', sessionCookie, { ...baseCookieOptions(), maxAge: expiresIn });
     return res.json({ ok: true });
   } catch (e) {
+    console.error('sessionLogin failed:', e.message);
     return res.status(401).json({ message: 'Invalid idToken', error: e.message });
   }
 });
+
 
 app.post('/api/sessionLogout', async (req, res) => {
   // If you want to revoke on Firebase side, you could verify and revoke refresh tokens:
