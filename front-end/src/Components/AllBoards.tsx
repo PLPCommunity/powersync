@@ -13,7 +13,8 @@ import {
   ExternalLink,
 } from "lucide-react";
 
-// 👇 import your compat firebase file (exact path may differ in your project)
+import type firebase from "firebase/compat/app";
+// compat firebase you already have
 import { auth } from "../utils/firebase";
 import Login from "../Components/Login";
 
@@ -43,12 +44,36 @@ function useFirebaseUser() {
   return currentUser;
 }
 
-// Tiny inline helper (no separate file) to attach Authorization header.
-async function authHeader() {
+// Create/refresh the HTTP-only session cookie on the backend.
+async function ensureSession(force = false) {
   const u = auth.currentUser;
-  if (!u) return {};
-  const token = await u.getIdToken();
-  return { Authorization: `Bearer ${token}` };
+  if (!u) return;
+  const idToken = await u.getIdToken(force);
+  await fetch(`${API_BASE}/api/sessionLogin`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ idToken }),
+  }).catch(() => {});
+}
+
+// Centralized fetch that includes credentials and retries once after 401
+async function api(
+  path: string,
+  init?: RequestInit,
+  retryOn401 = true
+): Promise<Response> {
+  const doFetch = () =>
+    fetch(`${API_BASE}${path}`, {
+      credentials: "include",
+      ...init,
+    });
+  let res = await doFetch();
+  if (res.status === 401 && retryOn401 && auth.currentUser) {
+    await ensureSession(true); // refresh session
+    res = await doFetch();
+  }
+  return res;
 }
 
 function gradientFromId(id: string): [string, string] {
@@ -63,12 +88,8 @@ function gradientFromId(id: string): [string, string] {
 
 function fmtDate(s?: string) {
   if (!s) return "—";
-  try {
-    const d = new Date(s);
-    return d.toLocaleString();
-  } catch {
-    return s;
-  }
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? s : d.toLocaleString();
 }
 
 /* -------------------------------- Component ------------------------------- */
@@ -83,7 +104,7 @@ export default function AllBoards() {
   const [query, setQuery] = useState("");
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
 
-  // Sync user profile on sign-in and load my boards
+  // When auth state changes: create/refresh session cookie, sync user, load boards
   useEffect(() => {
     let alive = true;
 
@@ -97,17 +118,15 @@ export default function AllBoards() {
           return;
         }
 
-        // Upsert this user in your backend (requires /api/users/sync route)
-        await fetch(`${API_BASE}/api/users/sync`, {
-          method: "POST",
-          headers: await authHeader(),
-        });
+        // Make sure we have a valid session cookie
+        await ensureSession();
 
-        // Fetch my boards (backend scopes by ownerId via verifyFirebase)
-        const res = await fetch(`${API_BASE}/api/boards`, {
-          headers: await authHeader(),
-        });
-        const data = await res.json();
+        // Upsert user (your backend should read from the session cookie)
+        await api(`/api/users/sync`, { method: "POST" }).catch(() => {});
+
+        // Load my boards
+        const res = await api(`/api/boards`);
+        const data = await res.json().catch(() => []);
         if (alive) {
           setBoards(Array.isArray(data) ? data : []);
           setLoading(false);
@@ -117,10 +136,8 @@ export default function AllBoards() {
       }
     })();
 
-    // Close dropdown when clicking outside
     const onDocClick = () => setOpenMenuId(null);
     document.addEventListener("click", onDocClick);
-
     return () => {
       alive = false;
       document.removeEventListener("click", onDocClick);
@@ -143,20 +160,17 @@ export default function AllBoards() {
     if (isCreating) return;
     setIsCreating(true);
     try {
-      const res = await fetch(`${API_BASE}/api/boards`, {
+      const res = await api(`/api/boards`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(await authHeader()),
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: "Untitled document" }),
       });
-      const created = await res.json();
+      const created = await res.json().catch(() => null);
       if (res.ok && created?._id) {
         setBoards((prev) => [created, ...prev]);
-        navigate(`/board/${created._id}`); // SINGULAR route
+        navigate(`/board/${created._id}`);
       } else {
-        alert(created?.message || "Failed to create board");
+        alert(created?.message || `Failed to create board (HTTP ${res.status})`);
       }
     } finally {
       setIsCreating(false);
@@ -171,12 +185,9 @@ export default function AllBoards() {
 
     setBoards((prev) => prev.map((b) => (b._id === id ? { ...b, name } : b)));
     try {
-      await fetch(`${API_BASE}/api/boards/${id}`, {
+      await api(`/api/boards/${id}`, {
         method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          ...(await authHeader()),
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name }),
       });
     } catch {
@@ -188,16 +199,13 @@ export default function AllBoards() {
     const src = boards.find((b) => b._id === id);
     const name = src?.name ? `${src.name} (Copy)` : "Untitled document (Copy)";
     try {
-      const res = await fetch(`${API_BASE}/api/boards`, {
+      const res = await api(`/api/boards`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(await authHeader()),
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, description: src?.description ?? "" }),
       });
-      const created = await res.json();
-      if (res.ok) setBoards((prev) => [created, ...prev]);
+      const created = await res.json().catch(() => null);
+      if (res.ok && created?._id) setBoards((prev) => [created, ...prev]);
       else alert(created?.message || "Failed to duplicate");
     } catch {
       // no-op
@@ -211,9 +219,8 @@ export default function AllBoards() {
     const prev = boards;
     setBoards((p) => p.filter((b) => b._id !== id)); // optimistic
     try {
-      const res = await fetch(`${API_BASE}/api/boards/${encodeURIComponent(id)}`, {
+      const res = await api(`/api/boards/${encodeURIComponent(id)}`, {
         method: "DELETE",
-        headers: await authHeader(),
       });
       if (!res.ok) {
         const payload = (res.headers.get("content-type") || "").includes("application/json")
@@ -283,6 +290,16 @@ export default function AllBoards() {
   }
 
   // Authenticated view
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return boards;
+    return boards.filter(
+      (b) =>
+        b.name?.toLowerCase().includes(q) ||
+        b.description?.toLowerCase().includes(q)
+    );
+  }, [boards, query]);
+
   return (
     <main className="min-h-screen bg-slate-50">
       <div className="mx-auto w-full max-w-6xl px-6 py-6">
@@ -357,8 +374,6 @@ function BoardCard({
   setOpenMenuId,
 }: any) {
   const gradient = useMemo(() => gradientFromId(board._id), [board._id]);
-
-  // Stop card open when clicking inside the action area
   const stop = (e: React.MouseEvent) => e.stopPropagation();
 
   return (
@@ -368,7 +383,6 @@ function BoardCard({
         openMenuId === board._id ? "z-50" : ""
       }`}
     >
-      {/* Preview header with gradient and rounded top */}
       <div
         className="relative h-28 w-full rounded-t-2xl"
         style={{ background: `linear-gradient(135deg, ${gradient[0]}, ${gradient[1]})` }}
