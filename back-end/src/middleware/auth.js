@@ -1,24 +1,27 @@
 // middleware/auth.js
-const admin = require('../firebaseAdmin');
+const admin = require('../firebaseAdmin'); // initializes admin with your service account
+const COOKIE_NAME = process.env.SESSION_COOKIE_NAME || 'fbSession';
 
-async function verifyFirebase(req, res, next) {
+async function verifySession(req, res, next) {
   try {
-    const hdr = req.headers.authorization || '';
-    const token = hdr.startsWith('Bearer ') ? hdr.slice(7) : null;
-    if (!token) return res.status(401).json({ message: 'Missing Authorization Bearer token' });
+    const sessionCookie = req.cookies?.[COOKIE_NAME];
+    if (!sessionCookie) return res.status(401).json({ message: 'No session' });
 
-    const decoded = await admin.auth().verifyIdToken(token);
+    // `true` = check revocation
+    const decoded = await admin.auth().verifySessionCookie(sessionCookie, true);
+
     req.user = {
       uid: decoded.uid,
-      name: decoded.name || '',
       email: decoded.email || '',
-      picture: decoded.picture || '',
-      provider: decoded.firebase?.sign_in_provider || '',
+      name: decoded.name || decoded.email || '',
+      picture: decoded.picture || ''
     };
-    next();
+
+    return next();
   } catch (e) {
-    return res.status(401).json({ message: 'Invalid/expired Firebase token', error: e.message });
+    console.error('verifySession failed:', e.message);
+    return res.status(401).json({ message: 'Invalid/expired session' });
   }
 }
 
-module.exports = { verifyFirebase };
+module.exports = { verifySession };
