@@ -13,8 +13,7 @@ import {
   ExternalLink,
 } from "lucide-react";
 
-import type firebase from "firebase/compat/app";
-// compat firebase you already have
+// Your compat firebase export (unchanged file you showed)
 import { auth } from "../utils/firebase";
 import Login from "../Components/Login";
 
@@ -33,47 +32,27 @@ const API_BASE =
 
 /* --------------------------------- Helpers -------------------------------- */
 
-function useFirebaseUser() {
-  const [currentUser, setCurrentUser] = useState<firebase.User | null>(
-    auth.currentUser
-  );
-  useEffect(() => {
-    const unsub = auth.onAuthStateChanged((u) => setCurrentUser(u));
-    return () => unsub();
-  }, []);
-  return currentUser;
-}
+// Fetch wrapper that ALWAYS sends cookies
+const api = (path: string, init: RequestInit = {}) =>
+  fetch(`${API_BASE}${path}`, {
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json",
+      ...(init.headers || {}),
+    },
+    ...init,
+  });
 
-// Create/refresh the HTTP-only session cookie on the backend.
-async function ensureSession(force = false) {
+// Create/refresh a server session cookie from current Firebase user
+async function ensureSession() {
   const u = auth.currentUser;
   if (!u) return;
-  const idToken = await u.getIdToken(force);
-  await fetch(`${API_BASE}/api/sessionLogin`, {
+  // force fresh token to avoid "expired" later
+  const idToken = await u.getIdToken(true);
+  await api("/api/sessionLogin", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    credentials: "include",
     body: JSON.stringify({ idToken }),
-  }).catch(() => {});
-}
-
-// Centralized fetch that includes credentials and retries once after 401
-async function api(
-  path: string,
-  init?: RequestInit,
-  retryOn401 = true
-): Promise<Response> {
-  const doFetch = () =>
-    fetch(`${API_BASE}${path}`, {
-      credentials: "include",
-      ...init,
-    });
-  let res = await doFetch();
-  if (res.status === 401 && retryOn401 && auth.currentUser) {
-    await ensureSession(true); // refresh session
-    res = await doFetch();
-  }
-  return res;
+  });
 }
 
 function gradientFromId(id: string): [string, string] {
@@ -81,68 +60,54 @@ function gradientFromId(id: string): [string, string] {
   for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) | 0;
   const hue1 = (hash >>> 0) % 360;
   const hue2 = (hue1 + 30 + ((hash >>> 8) % 60)) % 360;
-  const c1 = `hsl(${hue1}, 92%, 88%)`;
-  const c2 = `hsl(${hue2}, 92%, 80%)`;
-  return [c1, c2];
+  return [`hsl(${hue1}, 92%, 88%)`, `hsl(${hue2}, 92%, 80%)`];
 }
 
 function fmtDate(s?: string) {
   if (!s) return "—";
   const d = new Date(s);
-  return isNaN(d.getTime()) ? s : d.toLocaleString();
+  return isNaN(+d) ? s : d.toLocaleString();
 }
 
 /* -------------------------------- Component ------------------------------- */
 
 export default function AllBoards() {
   const navigate = useNavigate();
-  const currentUser = useFirebaseUser();
-
+  const [user, setUser] = useState<any>(auth.currentUser);
   const [boards, setBoards] = useState<Board[]>([]);
   const [loading, setLoading] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
   const [query, setQuery] = useState("");
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
 
-  // When auth state changes: create/refresh session cookie, sync user, load boards
+  // Keep local user state in sync
   useEffect(() => {
-    let alive = true;
-
-    (async () => {
-      try {
-        if (!currentUser) {
-          if (alive) {
-            setBoards([]);
-            setLoading(false);
-          }
-          return;
-        }
-
-        // Make sure we have a valid session cookie
-        await ensureSession();
-
-        // Upsert user (your backend should read from the session cookie)
-        await api(`/api/users/sync`, { method: "POST" }).catch(() => {});
-
-        // Load my boards
-        const res = await api(`/api/boards`);
-        const data = await res.json().catch(() => []);
-        if (alive) {
-          setBoards(Array.isArray(data) ? data : []);
-          setLoading(false);
-        }
-      } catch {
-        if (alive) setLoading(false);
+    const unsub = auth.onAuthStateChanged(async (u) => {
+      setUser(u);
+      if (!u) {
+        setBoards([]);
+        setLoading(false);
+        // also clear cookie session on sign out (best effort)
+        api("/api/sessionLogout", { method: "POST" }).catch(() => {});
+        return;
       }
-    })();
-
-    const onDocClick = () => setOpenMenuId(null);
-    document.addEventListener("click", onDocClick);
-    return () => {
-      alive = false;
-      document.removeEventListener("click", onDocClick);
-    };
-  }, [currentUser]);
+      // with a user: ensure cookie, sync profile, then load boards
+      try {
+        await ensureSession();
+        await api("/api/users/sync", { method: "POST" }); // upsert profile
+      } catch {
+        /* ignore */
+      }
+      try {
+        const r = await api("/api/boards");
+        const data = await r.json();
+        setBoards(Array.isArray(data) ? data : []);
+      } finally {
+        setLoading(false);
+      }
+    });
+    return () => unsub();
+  }, []);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -160,17 +125,17 @@ export default function AllBoards() {
     if (isCreating) return;
     setIsCreating(true);
     try {
-      const res = await api(`/api/boards`, {
+      await ensureSession();
+      const res = await api("/api/boards", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: "Untitled document" }),
       });
-      const created = await res.json().catch(() => null);
+      const created = await res.json();
       if (res.ok && created?._id) {
         setBoards((prev) => [created, ...prev]);
         navigate(`/board/${created._id}`);
       } else {
-        alert(created?.message || `Failed to create board (HTTP ${res.status})`);
+        alert(created?.message || "Failed to create board");
       }
     } finally {
       setIsCreating(false);
@@ -185,9 +150,9 @@ export default function AllBoards() {
 
     setBoards((prev) => prev.map((b) => (b._id === id ? { ...b, name } : b)));
     try {
+      await ensureSession();
       await api(`/api/boards/${id}`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name }),
       });
     } catch {
@@ -199,13 +164,13 @@ export default function AllBoards() {
     const src = boards.find((b) => b._id === id);
     const name = src?.name ? `${src.name} (Copy)` : "Untitled document (Copy)";
     try {
-      const res = await api(`/api/boards`, {
+      await ensureSession();
+      const res = await api("/api/boards", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, description: src?.description ?? "" }),
       });
-      const created = await res.json().catch(() => null);
-      if (res.ok && created?._id) setBoards((prev) => [created, ...prev]);
+      const created = await res.json();
+      if (res.ok) setBoards((prev) => [created, ...prev]);
       else alert(created?.message || "Failed to duplicate");
     } catch {
       // no-op
@@ -219,11 +184,14 @@ export default function AllBoards() {
     const prev = boards;
     setBoards((p) => p.filter((b) => b._id !== id)); // optimistic
     try {
+      await ensureSession();
       const res = await api(`/api/boards/${encodeURIComponent(id)}`, {
         method: "DELETE",
       });
       if (!res.ok) {
-        const payload = (res.headers.get("content-type") || "").includes("application/json")
+        const payload = (res.headers.get("content-type") || "").includes(
+          "application/json"
+        )
           ? await res.json().catch(() => null)
           : null;
         setBoards(prev);
@@ -237,8 +205,7 @@ export default function AllBoards() {
 
   /* ----------------------------------- UI ----------------------------------- */
 
-  // If not signed in, show your simple landing with a Login button
-  if (!currentUser) {
+  if (!user) {
     return (
       <main className="min-h-screen bg-slate-50">
         <header className="mx-auto flex max-w-6xl items-center justify-between px-6 py-5">
@@ -288,17 +255,6 @@ export default function AllBoards() {
       </main>
     );
   }
-
-  // Authenticated view
-  // const filtered = useMemo(() => {
-  //   const q = query.trim().toLowerCase();
-  //   if (!q) return boards;
-  //   return boards.filter(
-  //     (b) =>
-  //       b.name?.toLowerCase().includes(q) ||
-  //       b.description?.toLowerCase().includes(q)
-  //   );
-  // }, [boards, query]);
 
   return (
     <main className="min-h-screen bg-slate-50">
