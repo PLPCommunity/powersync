@@ -21,7 +21,7 @@ const srv = http.createServer(app);
 // Allow cookies (for session-based Firebase ID token) from your frontend
 const FRONTEND_ORIGIN =
   process.env.FRONTEND_ORIGIN ||
-  'http://localhost:5173'; // Vite default; change if your frontend runs elsewhere
+  'http://localhost:3000'; // Vite default; change if your frontend runs elsewhere
 
 app.use(cors({
   origin: FRONTEND_ORIGIN,
