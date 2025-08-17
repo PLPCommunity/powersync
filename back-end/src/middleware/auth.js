@@ -1,27 +1,38 @@
-// middleware/auth.js
-const admin = require('../firebaseAdmin'); // initializes admin with your service account
-const COOKIE_NAME = process.env.SESSION_COOKIE_NAME || 'fbSession';
+// src/middleware/auth.js
+const admin = require('../firebaseAdmin');
 
-async function verifySession(req, res, next) {
+/**
+ * Verifies Firebase ID token in:
+ *  - Authorization: Bearer <token>
+ *  - OR cookie named __session
+ */
+async function verifyFirebase(req, res, next) {
   try {
-    const sessionCookie = req.cookies?.[COOKIE_NAME];
-    if (!sessionCookie) return res.status(401).json({ message: 'No session' });
+    let idToken = null;
 
-    // `true` = check revocation
-    const decoded = await admin.auth().verifySessionCookie(sessionCookie, true);
+    const hdr = req.headers.authorization || '';
+    if (hdr.startsWith('Bearer ')) {
+      idToken = hdr.slice('Bearer '.length).trim();
+    } else if (req.cookies && req.cookies.__session) {
+      idToken = req.cookies.__session;
+    }
 
+    if (!idToken) {
+      return res.status(401).json({ message: 'Missing Firebase ID token' });
+    }
+
+    const decoded = await admin.auth().verifyIdToken(idToken);
+    // Attach user info for downstream routes
     req.user = {
       uid: decoded.uid,
       email: decoded.email || '',
-      name: decoded.name || decoded.email || '',
-      picture: decoded.picture || ''
+      name: decoded.name || decoded.displayName || '',
+      picture: decoded.picture || '',
     };
-
-    return next();
+    next();
   } catch (e) {
-    console.error('verifySession failed:', e.message);
-    return res.status(401).json({ message: 'Invalid/expired session' });
+    return res.status(401).json({ message: 'Invalid/expired Firebase token' });
   }
 }
 
-module.exports = { verifySession };
+module.exports = { verifyFirebase };

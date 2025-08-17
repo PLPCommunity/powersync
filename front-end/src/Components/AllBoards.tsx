@@ -290,15 +290,15 @@ export default function AllBoards() {
   }
 
   // Authenticated view
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return boards;
-    return boards.filter(
-      (b) =>
-        b.name?.toLowerCase().includes(q) ||
-        b.description?.toLowerCase().includes(q)
-    );
-  }, [boards, query]);
+  // const filtered = useMemo(() => {
+  //   const q = query.trim().toLowerCase();
+  //   if (!q) return boards;
+  //   return boards.filter(
+  //     (b) =>
+  //       b.name?.toLowerCase().includes(q) ||
+  //       b.description?.toLowerCase().includes(q)
+  //   );
+  // }, [boards, query]);
 
   return (
     <main className="min-h-screen bg-slate-50">
