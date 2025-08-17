@@ -19,7 +19,9 @@ const io   = new Server(srv, { cors: { origin: true, credentials: true } });
 // --- config ---
 const SESSION_COOKIE_NAME = process.env.SESSION_COOKIE_NAME || 'fbSession';
 const SESSION_COOKIE_MAXAGE_MS = Number(process.env.SESSION_COOKIE_MAXAGE_MS || 1000 * 60 * 60 * 24 * 5); // 5 days
-const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || 'http://localhost:5173';
+const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || 'http://localhost:3000';
+app.use(cors({ origin: 'http://localhost:3000', credentials: true }));
+
 
 // --- middleware ---
 app.use(cors({
