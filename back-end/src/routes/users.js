@@ -25,6 +25,9 @@ router.post('/sync', verifyFirebase, async (req, res) => {
     );
 
     res.json({ ok: true, user });
+    // in routes/users.js, right after the require:
+console.log('verifyFirebase type:', typeof verifyFirebase); // should print 'function'
+
   } catch (e) {
     res.status(500).json({ message: 'Failed to sync user', error: e.message });
   }
