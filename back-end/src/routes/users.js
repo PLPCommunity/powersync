@@ -1,35 +1,31 @@
-// src/routes/users.js
 const express = require('express');
 const { verifyFirebase } = require('../middleware/auth');
 const User = require('../models/User');
 
 const router = express.Router();
 
-// Upsert current user record (requires a verified Firebase token)
+// Upsert the signed-in user
 router.post('/sync', verifyFirebase, async (req, res) => {
   try {
     const { uid, email, name, picture } = req.user;
+    const provider = req.user?.firebase?.sign_in_provider || '';
 
-    const update = {
-      uid,
-      email,
-      name: name || '',
-      photoURL: picture || '',
-      provider: '', // optional, fill from client if you want
-    };
-
-    const user = await User.findOneAndUpdate(
+    const doc = await User.findOneAndUpdate(
       { uid },
-      { $set: update },
-      { new: true, upsert: true }
+      {
+        $set: {
+          email: email || '',
+          name: name || '',
+          photoURL: picture || '',
+          provider,
+        },
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
     );
 
-    res.json({ ok: true, user });
-    // in routes/users.js, right after the require:
-console.log('verifyFirebase type:', typeof verifyFirebase); // should print 'function'
-
+    return res.json({ ok: true, user: doc });
   } catch (e) {
-    res.status(500).json({ message: 'Failed to sync user', error: e.message });
+    return res.status(500).json({ message: 'Failed to sync user', error: e.message });
   }
 });
 
