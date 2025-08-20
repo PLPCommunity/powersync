@@ -13,7 +13,7 @@ import { Link, useNavigate } from "react-router-dom";
 import Login from "../Components/Login";
 import { auth } from "../utils/firebase";
 import { useDispatch, useSelector } from "react-redux";
-import { login, logout, selectUser } from "../features/userSlice";
+import {logout, selectUser } from "../features/userSlice";
 
 export function HomePage() {
   const user = useSelector(selectUser);

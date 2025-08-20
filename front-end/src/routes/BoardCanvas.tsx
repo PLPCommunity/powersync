@@ -3,7 +3,11 @@ import React, { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { io, Socket } from "socket.io-client";
 import { auth } from "../utils/firebase";
-import { } from "react-redux";
+import {useDispatch, useSelector } from "react-redux";
+import {logout, selectUser } from "../features/userSlice";
+import Login from "../Components/Login";
+
+
 
 /* -------------------- Types -------------------- */
 type ShapeType =
@@ -81,11 +85,12 @@ function rectHandlesRotated(s: RectLike): HandlePoint[] {
 }
 
 /* -------------------- Component -------------------- */
-import { } from "../features/userSlice";
 export function BoardCanvas() {
   
   const { id: boardId } = useParams();
   const navigate = useNavigate();
+  const user = useSelector(selectUser);
+  const dispatch = useDispatch();
 
   const [boardName, setBoardName] = useState("Untitled document");
   const [tool, setTool] = useState<Tool>("select");
@@ -717,6 +722,17 @@ export function BoardCanvas() {
     onResize(); window.addEventListener("resize", onResize);
     return ()=>window.removeEventListener("resize", onResize);
   }, []);
+
+  const signOutOfApp = () => {
+    dispatch(logout);
+    auth.signOut();
+    window.location.reload();
+
+    if (user) {
+      auth.signOut();
+    }
+    navigate("/");
+  };
 
   /* -------------------- UI -------------------- */
   const palette=["#111111","#EF4444","#F59E0B","#10B981","#3B82F6","#8B5CF6","#EC4899","#000000","#FFFFFF"];
