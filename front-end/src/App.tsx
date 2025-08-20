@@ -17,10 +17,14 @@ export default function App() {
         <Route
           path="/board/:id"
           element={
-            // <Suspense fallback={<div className="p-6 text-slate-600">Loading board…</div>}>
+            // <Suspense fallback={<div className="p-6 text-center text-slate-600">Loading board…</div>}>
             // </Suspense>
               <BoardCanvas />
           }
+        />
+        <Route
+          path="/board/public/:linkId"
+          element={<BoardCanvas isPublic={true} />}
         />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

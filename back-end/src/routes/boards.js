@@ -27,7 +27,7 @@ router.post('/', async (req, res) => {
   }
 });
 
-// List (mine or I'm a collaborator)
+// List (mine or I'm a collaborator) - optimized with projection
 router.get('/', async (req, res) => {
   try {
     const boards = await Board.find({
@@ -36,14 +36,17 @@ router.get('/', async (req, res) => {
         { 'collaborators.uid': req.user.uid },
         { 'collaborators.email': req.user.email?.toLowerCase() },
       ],
-    }).sort({ updatedAt: -1 });
+    })
+    .select('name description ownerId collaborators publicAccess updatedAt createdAt')
+    .sort({ updatedAt: -1 })
+    .lean();
     return res.json(boards);
   } catch (e) {
     return res.status(500).json({ message: 'Failed to fetch boards', error: e.message });
   }
 });
 
-// Get one (owner or collaborator)
+// Get one (owner or collaborator) - optimized with projection
 router.get('/:id', async (req, res) => {
   try {
     const board = await Board.findOne({
@@ -53,11 +56,29 @@ router.get('/:id', async (req, res) => {
         { 'collaborators.uid': req.user.uid },
         { 'collaborators.email': req.user.email?.toLowerCase() },
       ],
-    });
+    })
+    .select('name description ownerId ownerName ownerEmail collaborators publicAccess shapes updatedAt createdAt')
+    .lean();
     if (!board) return res.status(404).json({ message: 'Board not found' });
     return res.json(board);
   } catch (e) {
     return res.status(500).json({ message: 'Failed to fetch board', error: e.message });
+  }
+});
+
+// Get one by public link (no auth required)
+router.get('/public/:linkId', async (req, res) => {
+  try {
+    const board = await Board.findOne({
+      'publicAccess.enabled': true,
+      'publicAccess.linkId': req.params.linkId,
+    })
+    .select('name description publicAccess shapes updatedAt createdAt')
+    .lean();
+    if (!board) return res.status(404).json({ message: 'Public board not found' });
+    return res.json(board);
+  } catch (e) {
+    return res.status(500).json({ message: 'Failed to fetch public board', error: e.message });
   }
 });
 
@@ -85,7 +106,7 @@ router.put('/:id', async (req, res) => {
   }
 });
 
-// Save shapes (owner or editor)
+// Save shapes (owner or editor) - optimized for real-time
 router.put('/:id/shapes', async (req, res) => {
   try {
     const { shapes } = req.body;
@@ -101,7 +122,7 @@ router.put('/:id/shapes', async (req, res) => {
     });
     if (!board) return res.status(404).json({ message: 'Board not found' });
 
-    // Merge audit fields per shape id
+    // Merge audit fields per shape id - optimized for real-time
     const prevById = new Map();
     for (const s of board.shapes || []) prevById.set(s.id, s);
     const nowIso = new Date().toISOString();
@@ -203,6 +224,163 @@ router.post('/:id/accept', async (req, res) => {
     return res.json({ ok: true });
   } catch (e) {
     return res.status(500).json({ message: 'Failed to accept invite', error: e.message });
+  }
+});
+
+// Update collaborator role (owner only)
+router.put('/:id/collaborators/:email/role', async (req, res) => {
+  try {
+    const { role } = req.body || {};
+    if (!['editor', 'viewer'].includes(role)) {
+      return res.status(400).json({ message: 'Invalid role' });
+    }
+
+    const board = await Board.findOne({ _id: req.params.id, ownerId: req.user.uid });
+    if (!board) return res.status(404).json({ message: 'Board not found' });
+
+    const result = await Board.updateOne(
+      { _id: board._id, 'collaborators.email': req.params.email },
+      { $set: { 'collaborators.$.role': role } }
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ message: 'Collaborator not found' });
+    }
+
+    return res.json({ ok: true });
+  } catch (e) {
+    return res.status(500).json({ message: 'Failed to update collaborator role', error: e.message });
+  }
+});
+
+// Remove collaborator (owner only)
+router.delete('/:id/collaborators/:email', async (req, res) => {
+  try {
+    const board = await Board.findOne({ _id: req.params.id, ownerId: req.user.uid });
+    if (!board) return res.status(404).json({ message: 'Board not found' });
+
+    const result = await Board.updateOne(
+      { _id: board._id },
+      { $pull: { collaborators: { email: req.params.email } } }
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ message: 'Board not found' });
+    }
+
+    return res.json({ ok: true });
+  } catch (e) {
+    return res.status(500).json({ message: 'Failed to remove collaborator', error: e.message });
+  }
+});
+
+// Update public access settings (owner only)
+router.put('/:id/public-access', async (req, res) => {
+  try {
+    const { enabled, role } = req.body || {};
+    if (typeof enabled !== 'boolean') {
+      return res.status(400).json({ message: 'enabled must be a boolean' });
+    }
+    if (enabled && !['viewer', 'editor'].includes(role)) {
+      return res.status(400).json({ message: 'Invalid role for public access' });
+    }
+
+    const board = await Board.findOne({ _id: req.params.id, ownerId: req.user.uid });
+    if (!board) return res.status(404).json({ message: 'Board not found' });
+
+    const update = { 'publicAccess.enabled': enabled };
+    if (enabled) {
+      update['publicAccess.role'] = role || 'viewer';
+      // Generate link ID if not exists
+      const boardDoc = await Board.findById(req.params.id);
+      if (!boardDoc.publicAccess.linkId) {
+        update['publicAccess.linkId'] = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+      }
+    } else {
+      update['publicAccess.role'] = 'viewer';
+      update['publicAccess.linkId'] = null;
+    }
+
+    await Board.updateOne({ _id: req.params.id }, { $set: update });
+    return res.json({ ok: true });
+  } catch (e) {
+    return res.status(500).json({ message: 'Failed to update public access', error: e.message });
+  }
+});
+
+// Update collaborator role (owner only)
+router.put('/:id/collaborators/:email/role', async (req, res) => {
+  try {
+    const { role } = req.body || {};
+    if (!['editor', 'viewer'].includes(role)) {
+      return res.status(400).json({ message: 'Invalid role' });
+    }
+
+    const board = await Board.findOne({ _id: req.params.id, ownerId: req.user.uid });
+    if (!board) return res.status(404).json({ message: 'Board not found' });
+
+    const result = await Board.updateOne(
+      { _id: board._id, 'collaborators.email': req.params.email },
+      { $set: { 'collaborators.$.role': role } }
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ message: 'Collaborator not found' });
+    }
+
+    return res.json({ ok: true });
+  } catch (e) {
+    return res.status(500).json({ message: 'Failed to update collaborator role', error: e.message });
+  }
+});
+
+// Remove collaborator (owner only)
+router.delete('/:id/collaborators/:email', async (req, res) => {
+  try {
+    const board = await Board.findOne({ _id: req.params.id, ownerId: req.user.uid });
+    if (!board) return res.status(404).json({ message: 'Board not found' });
+
+    const result = await Board.updateOne(
+      { _id: board._id },
+      { $pull: { collaborators: { email: req.params.email } } }
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ message: 'Board not found' });
+    }
+
+    return res.json({ ok: true });
+  } catch (e) {
+    return res.status(500).json({ message: 'Failed to remove collaborator', error: e.message });
+  }
+});
+
+// Update public access settings (owner only)
+router.put('/:id/public-access', async (req, res) => {
+  try {
+    const { enabled, role } = req.body || {};
+    if (typeof enabled !== 'boolean') {
+      return res.status(400).json({ message: 'enabled must be a boolean' });
+    }
+    if (enabled && !['viewer', 'editor'].includes(role)) {
+      return res.status(400).json({ message: 'Invalid role for public access' });
+    }
+
+    const board = await Board.findOne({ _id: req.params.id, ownerId: req.user.uid });
+    if (!board) return res.status(404).json({ message: 'Board not found' });
+
+    const update = { 'publicAccess.enabled': enabled };
+    if (enabled) {
+      update['publicAccess.role'] = role || 'viewer';
+    } else {
+      update['publicAccess.role'] = 'viewer';
+      update['publicAccess.linkId'] = null;
+    }
+
+    await Board.updateOne({ _id: board._id }, { $set: update });
+    return res.json({ ok: true });
+  } catch (e) {
+    return res.status(500).json({ message: 'Failed to update public access', error: e.message });
   }
 });
 

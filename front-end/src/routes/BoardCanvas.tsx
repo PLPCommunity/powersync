@@ -3,11 +3,6 @@ import React, { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { io, Socket } from "socket.io-client";
 import { auth } from "../utils/firebase";
-import {useDispatch, useSelector } from "react-redux";
-import {logout, selectUser } from "../features/userSlice";
-import Login from "../Components/Login";
-
-
 
 /* -------------------- Types -------------------- */
 type ShapeType =
@@ -23,6 +18,12 @@ type Collaborator = {
   invitedAt?: string;
   acceptedAt?: string;
   status?: "invited" | "accepted";
+};
+
+type PublicAccess = {
+  enabled: boolean;
+  role: CollaboratorRole;
+  linkId?: string;
 };
 
 type RectLike = {
@@ -85,12 +86,13 @@ function rectHandlesRotated(s: RectLike): HandlePoint[] {
 }
 
 /* -------------------- Component -------------------- */
-export function BoardCanvas() {
+export function BoardCanvas({ isPublic = false }: { isPublic?: boolean }) {
   
-  const { id: boardId } = useParams();
+  const { id: boardId, linkId } = useParams();
   const navigate = useNavigate();
-  const user = useSelector(selectUser);
-  const dispatch = useDispatch();
+  
+  // For public boards, use linkId instead of boardId
+  const actualBoardId = isPublic ? linkId : boardId;
 
   const [boardName, setBoardName] = useState("Untitled document");
   const [tool, setTool] = useState<Tool>("select");
@@ -98,6 +100,7 @@ export function BoardCanvas() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false); // <-- gate autosaves until data is fetched
   const [collaborators, setCollaborators] = useState<Collaborator[]>([]);
+  const [publicAccess, setPublicAccess] = useState<PublicAccess>({ enabled: false, role: "viewer" });
   const [shareOpen, setShareOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState<CollaboratorRole>("viewer");
@@ -164,11 +167,12 @@ export function BoardCanvas() {
 
     loadingRef.current = true;
     try {
-      const res = await fetch(`${API_BASE}/api/boards/${boardId}`, {
+      const endpoint = isPublic ? `/api/boards/public/${actualBoardId}` : `/api/boards/${actualBoardId}`;
+      const res = await fetch(`${API_BASE}${endpoint}`, {
         method: "GET",
-        credentials: "include",
+        credentials: isPublic ? "omit" : "include",
       });
-      if (res.status === 401) {
+      if (res.status === 401 && !isPublic) {
         navigate("/boards");
         return;
       }
@@ -179,6 +183,7 @@ export function BoardCanvas() {
       const nextName = data?.name || "Untitled document";
       const nextShapes: Shape[] = Array.isArray(data?.shapes) ? data.shapes : [];
       const nextCollabs: Collaborator[] = Array.isArray(data?.collaborators) ? data.collaborators : [];
+      const nextPublicAccess: PublicAccess = data?.publicAccess || { enabled: false, role: "viewer" };
 
       serverNameRef.current = nextName;
       lastSavedShapesRef.current = JSON.stringify(nextShapes);
@@ -186,11 +191,21 @@ export function BoardCanvas() {
       setBoardName(nextName);
       setShapes(nextShapes);
       setCollaborators(nextCollabs);
-      const u = auth.currentUser; const email = u?.email?.toLowerCase();
-      const amOwner = data?.ownerId && u?.uid && data.ownerId === u.uid;
-      const coll = nextCollabs.find(c=> (c.uid && c.uid===u?.uid) || (c.email && c.email.toLowerCase()===email));
-      setIsOwner(!!amOwner);
-      setCanEdit(!!amOwner || (coll?.role === 'editor'));
+      setPublicAccess(nextPublicAccess);
+      
+      if (isPublic) {
+        // Public board: permissions based on publicAccess settings
+        setIsOwner(false);
+        setCanEdit(nextPublicAccess.role === 'editor');
+      } else {
+        // Private board: normal permission logic
+        const u = auth.currentUser; const email = u?.email?.toLowerCase();
+        const amOwner = data?.ownerId && u?.uid && data.ownerId === u.uid;
+        const coll = nextCollabs.find(c=> (c.uid && c.uid===u?.uid) || (c.email && c.email.toLowerCase()===email));
+        setIsOwner(!!amOwner);
+        setCanEdit(!!amOwner || (coll?.role === 'editor'));
+      }
+      
       setLoaded(true); // <-- allow autosaves after first load
     } catch {
       // ignore for now
@@ -204,20 +219,28 @@ export function BoardCanvas() {
     let mounted = true;
     socketRef.current = io(API_BASE, { transports: ["websocket"] });
 
-    const unsub = auth.onAuthStateChanged(async (u: any) => {
-      if (!mounted) return;
-      if (!u) {
-        navigate("/boards");
-        return;
-      }
-      const ok = await ensureSession();
-      if (!ok) { navigate("/boards"); return; }
-      await fetchBoard(true); // force initial fetch & prevent autosave from wiping
-      try {
-        await fetch(`${API_BASE}/api/boards/${boardId}/accept`, { method: "POST", credentials: "include" });
-      } catch {}
-      socketRef.current?.emit("join-board", { boardId, userId: u?.uid, userName: u?.displayName });
-    });
+    let unsub: (() => void) | undefined;
+    
+    if (isPublic) {
+      // Public board: no auth required, just fetch
+      fetchBoard(true);
+    } else {
+      // Private board: require auth
+      unsub = auth.onAuthStateChanged(async (u: any) => {
+        if (!mounted) return;
+        if (!u) {
+          navigate("/boards");
+          return;
+        }
+        const ok = await ensureSession();
+        if (!ok) { navigate("/boards"); return; }
+        await fetchBoard(true); // force initial fetch & prevent autosave from wiping
+        try {
+          await fetch(`${API_BASE}/api/boards/${actualBoardId}/accept`, { method: "POST", credentials: "include" });
+        } catch {}
+        socketRef.current?.emit("join-board", { boardId: actualBoardId, userId: u?.uid, userName: u?.displayName });
+      });
+    }
 
     // refresh when focus returns (if not dirty) + background poll
     const onFocus = () => fetchBoard(false);
@@ -228,7 +251,7 @@ export function BoardCanvas() {
       mounted = false;
       socketRef.current?.disconnect();
       socketRef.current = null;
-      unsub();
+      unsub?.();
       window.removeEventListener("focus", onFocus);
       window.clearInterval(id);
     };
@@ -264,7 +287,7 @@ export function BoardCanvas() {
 
     const t = setTimeout(async () => {
       try {
-        const r = await fetch(`${API_BASE}/api/boards/${boardId}/shapes`, {
+        const r = await fetch(`${API_BASE}/api/boards/${actualBoardId}/shapes`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           credentials: "include",
@@ -275,9 +298,9 @@ export function BoardCanvas() {
           lastSavedShapesRef.current = current; // synced
         }
       } catch {/* ignore */}
-    }, 500);
+    }, 200); // Reduced from 500ms to 200ms for faster sync
     return () => clearTimeout(t);
-  }, [shapes, boardId, loaded, navigate]);
+  }, [shapes, actualBoardId, loaded, navigate]);
 
   /* -------------------- Autosave (name) -------------------- */
   useEffect(() => {
@@ -287,7 +310,7 @@ export function BoardCanvas() {
 
     const t = setTimeout(async () => {
       try {
-        const r = await fetch(`${API_BASE}/api/boards/${boardId}`, {
+        const r = await fetch(`${API_BASE}/api/boards/${actualBoardId}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           credentials: "include",
@@ -298,9 +321,9 @@ export function BoardCanvas() {
           serverNameRef.current = trimmed || "Untitled document";
         }
       } catch {/* ignore */}
-    }, 500);
+    }, 300); // Reduced from 500ms to 300ms for faster sync
     return () => clearTimeout(t);
-  }, [boardName, boardId, loaded, navigate]);
+  }, [boardName, actualBoardId, loaded, navigate]);
 
   /* -------------------- Render loop -------------------- */
   const requestNextFrame = () => {
@@ -550,7 +573,7 @@ export function BoardCanvas() {
     };
     setShapes((prev) => [...prev, base]);
     setSelectedId(id);
-    socketRef.current?.emit("shape-create", { boardId, shape: base, user: { uid: auth.currentUser?.uid } });
+          socketRef.current?.emit("shape-create", { boardId: actualBoardId, shape: base, user: { uid: auth.currentUser?.uid } });
     setTextEditor({ visible: true, x: p.x, y: p.y, value: "", shapeId: id });
   }
 
@@ -619,12 +642,12 @@ export function BoardCanvas() {
 
     if (draftShapeRef.current && isFreehand(draftShapeRef.current)) {
       const d = draftShapeRef.current as Freehand; d.bbox = computeBBox(d.points);
-      setShapes((prev) => [...prev, d]); socketRef.current?.emit("shape-create",{boardId,shape:d,user:{uid:auth.currentUser?.uid}}); draftShapeRef.current=null;
+      setShapes((prev) => [...prev, d]); socketRef.current?.emit("shape-create",{boardId:actualBoardId,shape:d,user:{uid:auth.currentUser?.uid}}); draftShapeRef.current=null;
     }
     if (draftShapeRef.current && !isFreehand(draftShapeRef.current)) {
       const d = draftShapeRef.current as any; let toAdd: Shape = d as Shape;
       if (isRectLike(d)) { const norm = normalizeRect({ x:d.x, y:d.y, w:d.w, h:d.h }); toAdd = { ...(d as RectLike), ...norm } as RectLike; }
-      setShapes((prev) => [...prev, toAdd]); socketRef.current?.emit("shape-create",{boardId,shape:toAdd,user:{uid:auth.currentUser?.uid}}); draftShapeRef.current=null;
+      setShapes((prev) => [...prev, toAdd]); socketRef.current?.emit("shape-create",{boardId:actualBoardId,shape:toAdd,user:{uid:auth.currentUser?.uid}}); draftShapeRef.current=null;
     }
 
     if (isDraggingRef.current && draggedShapeRef.current && mutatedDuringDragRef.current) {
@@ -632,7 +655,7 @@ export function BoardCanvas() {
       if (orig) {
         setShapes((prev) => prev.map((s) => (s.id === finalShape.id ? finalShape : s)));
         const diff = diffShape(orig, finalShape);
-        if (Object.keys(diff).length > 0) socketRef.current?.emit("shape-update", { boardId, shapeId: finalShape.id, props: diff, user:{uid:auth.currentUser?.uid} });
+        if (Object.keys(diff).length > 0) socketRef.current?.emit("shape-update", { boardId: actualBoardId, shapeId: finalShape.id, props: diff, user:{uid:auth.currentUser?.uid} });
       }
     }
 
@@ -676,8 +699,8 @@ export function BoardCanvas() {
   }
   const copySelected=()=>{ const id=selectedIdRef.current; if (!id) return; const s=shapesRef.current.find(sh=>sh.id===id); if (!s) return; clipboardRef.current = JSON.parse(JSON.stringify(s)); };
   const cutSelected=()=>{ copySelected(); deleteSelected(); };
-  const pasteClipboard=()=>{ const clip=clipboardRef.current; if (!clip) return; const pasted=cloneForPaste(clip); setShapes(prev=>[...prev,pasted]); setSelectedId(pasted.id); socketRef.current?.emit("shape-create",{boardId,shape:pasted,user:{uid:auth.currentUser?.uid}}); };
-  const deleteSelected=()=>{ const id=selectedIdRef.current; if (!id) return; isDraggingRef.current=false; draggedShapeRef.current=null; setShapes(prev=>prev.filter(s=>s.id!==id)); setSelectedId(null); socketRef.current?.emit("shape-delete",{boardId,shapeId:id,user:{uid:auth.currentUser?.uid}}); };
+  const pasteClipboard=()=>{ const clip=clipboardRef.current; if (!clip) return; const pasted=cloneForPaste(clip); setShapes(prev=>[...prev,pasted]); setSelectedId(pasted.id); socketRef.current?.emit("shape-create",{boardId:actualBoardId,shape:pasted,user:{uid:auth.currentUser?.uid}}); };
+  const deleteSelected=()=>{ const id=selectedIdRef.current; if (!id) return; isDraggingRef.current=false; draggedShapeRef.current=null; setShapes(prev=>prev.filter(s=>s.id!==id)); setSelectedId(null); socketRef.current?.emit("shape-delete",{boardId:actualBoardId,shapeId:id,user:{uid:auth.currentUser?.uid}}); };
 
   useEffect(()=> {
     const isTypingTarget=()=>{ const el=document.activeElement as HTMLElement|null;
@@ -723,17 +746,6 @@ export function BoardCanvas() {
     return ()=>window.removeEventListener("resize", onResize);
   }, []);
 
-  const signOutOfApp = () => {
-    dispatch(logout);
-    auth.signOut();
-    window.location.reload();
-
-    if (user) {
-      auth.signOut();
-    }
-    navigate("/");
-  };
-
   /* -------------------- UI -------------------- */
   const palette=["#111111","#EF4444","#F59E0B","#10B981","#3B82F6","#8B5CF6","#EC4899","#000000","#FFFFFF"];
 
@@ -761,7 +773,7 @@ export function BoardCanvas() {
               className="font-semibold"
             />
             <button
-              className="px-3 py-1.5 rounded-md bg-indigo-600 text-white hover:bg-indigo-700"
+              className="px-6 py-2 ml-3  text-sm font-semibold rounded-md bg-pink-600 text-white hover:bg-pink-700"
               style={{ cursor: "pointer", opacity: isOwner ? 1 : 0.6 }}
               onClick={()=> isOwner && setShareOpen(true)}
               title={isOwner ? "Share" : "Only owners can share"}
@@ -774,7 +786,7 @@ export function BoardCanvas() {
           const sel=shapes.find(s=>s.id===selectedId); if (!sel) return null;
           const updateSel=(props:Partial<Shape>)=>{
             setShapes(prev=>prev.map(s=>s.id===selectedId? ({...s, ...props} as Shape) : s));
-            socketRef.current?.emit("shape-update",{boardId,shapeId:selectedId,props});
+            socketRef.current?.emit("shape-update",{boardId,shapeId:selectedId,props,user:{uid:auth.currentUser?.uid}});
           };
           return (
             <div className="bg-white flex justify-center mx-auto gap-4 my-2 ">
@@ -822,59 +834,182 @@ export function BoardCanvas() {
           />
           {shareOpen && (
             <div style={{ position:"absolute", inset:0, background:"#0006", display:"grid", placeItems:"center" }} onClick={()=> setShareOpen(false)}>
-              <div onClick={(e)=> e.stopPropagation()} style={{ width:420, background:"#fff", borderRadius:12, padding:16, boxShadow:"0 10px 30px rgba(0,0,0,0.2)" }}>
-                <div className="flex items-center justify-between">
-                  <h3 className="font-semibold">Share "{boardName}"</h3>
+              <div onClick={(e)=> e.stopPropagation()} style={{ width:520, background:"#fff", borderRadius:12, padding:20, boxShadow:"0 10px 30px rgba(0,0,0,0.2)" }}>
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold">Share "{boardName}"</h3>
                   <button onClick={()=> setShareOpen(false)} style={{ cursor:"pointer" }}>✕</button>
                 </div>
-                <div className="mt-3 flex gap-2">
-                  <input
-                    value={inviteEmail}
-                    onChange={(e)=> setInviteEmail(e.target.value)}
-                    placeholder="Invite by email"
-                    style={{ flex:1, border:"1px solid #e5e7eb", borderRadius:8, padding:"8px 10px" }}
-                  />
-                  <select value={inviteRole} onChange={(e)=> setInviteRole(e.target.value as CollaboratorRole)} style={{ border:"1px solid #e5e7eb", borderRadius:8, padding:"8px 10px" }}>
-                    <option value="viewer">Viewer</option>
-                    <option value="editor">Editor</option>
-                  </select>
-                  <button
-                    onClick={async ()=>{
-                      const email = inviteEmail.trim(); if (!email) return;
-                      try {
-                        const r = await fetch(`${API_BASE}/api/boards/${boardId}/invite`, {
-                          method: "POST",
-                          headers: { "Content-Type": "application/json" },
-                          credentials: "include",
-                          body: JSON.stringify({ email, role: inviteRole })
-                        });
-                        if (!r.ok) { const j = await r.json().catch(()=>null); alert(j?.message || `Invite failed (${r.status})`); return; }
-                        setInviteEmail("");
-                        // refresh collaborators list
-                        fetchBoard(true);
-                      } catch (e:any) { alert(e?.message || 'Invite failed'); }
-                    }}
-                    className="px-3 py-2 rounded-md bg-slate-900 text-white"
-                    style={{ cursor:"pointer" }}
-                  >Invite</button>
+                
+                {/* Public Link Section */}
+                <div className="mb-6 p-4 bg-slate-50 rounded-lg">
+                  <div className="flex items-center justify-between mb-3">
+                    <h4 className="font-medium text-slate-800">Public Link</h4>
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={publicAccess.enabled}
+                        onChange={async (e) => {
+                          try {
+                            const r = await fetch(`${API_BASE}/api/boards/${boardId}/public-access`, {
+                              method: "PUT",
+                              headers: { "Content-Type": "application/json" },
+                              credentials: "include",
+                              body: JSON.stringify({ 
+                                enabled: e.target.checked, 
+                                role: publicAccess.role 
+                              })
+                            });
+                            if (!r.ok) { const j = await r.json().catch(()=>null); alert(j?.message || `Failed (${r.status})`); return; }
+                            fetchBoard(true);
+                          } catch (e:any) { alert(e?.message || 'Failed'); }
+                        }}
+                        className="w-4 h-4 text-indigo-600 rounded"
+                      />
+                      <span className="text-sm text-slate-600">Enable public access</span>
+                    </label>
+                  </div>
+                  
+                  {publicAccess.enabled && (
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-2">
+                        <select 
+                          value={publicAccess.role} 
+                          onChange={async (e) => {
+                            try {
+                              const r = await fetch(`${API_BASE}/api/boards/${actualBoardId}/public-access`, {
+                                method: "PUT",
+                                headers: { "Content-Type": "application/json" },
+                                credentials: "include",
+                                body: JSON.stringify({ 
+                                  enabled: true, 
+                                  role: e.target.value as CollaboratorRole 
+                                })
+                              });
+                              if (!r.ok) { const j = await r.json().catch(()=>null); alert(j?.message || `Failed (${r.status})`); return; }
+                              fetchBoard(true);
+                            } catch (e:any) { alert(e?.message || 'Failed'); }
+                          }}
+                          className="px-3 py-1.5 border border-slate-300 rounded text-sm"
+                        >
+                          <option value="viewer">Viewer</option>
+                          <option value="editor">Editor</option>
+                        </select>
+                        <span className="text-sm text-slate-600">can access via link</span>
+                      </div>
+                      
+                      {publicAccess.linkId && (
+                        <div className="flex items-center gap-2 p-3 bg-white border border-slate-200 rounded">
+                          <input
+                            value={`${window.location.origin}/board/public/${publicAccess.linkId}`}
+                            readOnly
+                            className="flex-1 text-sm border-none outline-none bg-transparent"
+                          />
+                          <button
+                            onClick={() => navigator.clipboard.writeText(`${window.location.origin}/board/public/${publicAccess.linkId}`)}
+                            className="px-3 py-1.5 text-xs bg-slate-600 text-white rounded hover:bg-slate-700"
+                            style={{ cursor: "pointer" }}
+                          >
+                            Copy
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
-                <div className="mt-4">
-                  <h4 className="text-sm font-medium text-slate-700 mb-1">People with access</h4>
-                  <ul className="max-h-48 overflow-auto divide-y divide-slate-100">
-                    <li className="py-2 flex items-center justify-between">
+
+                {/* Invite by Email Section */}
+                <div className="mb-6">
+                  <h4 className="font-medium text-slate-800 mb-3">Invite by Email</h4>
+                  <div className="flex gap-2">
+                    <input
+                      value={inviteEmail}
+                      onChange={(e)=> setInviteEmail(e.target.value)}
+                      placeholder="Enter email address"
+                      style={{ flex:1, border:"1px solid #e5e7eb", borderRadius:8, padding:"8px 10px" }}
+                    />
+                    <select value={inviteRole} onChange={(e)=> setInviteRole(e.target.value as CollaboratorRole)} style={{ border:"1px solid #e5e7eb", borderRadius:8, padding:"8px 10px" }}>
+                      <option value="viewer">Viewer</option>
+                      <option value="editor">Editor</option>
+                    </select>
+                    <button
+                      onClick={async ()=>{
+                        const email = inviteEmail.trim(); if (!email) return;
+                        try {
+                          const r = await fetch(`${API_BASE}/api/boards/${actualBoardId}/invite`, {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            credentials: "include",
+                            body: JSON.stringify({ email, role: inviteRole })
+                          });
+                          if (!r.ok) { const j = await r.json().catch(()=>null); alert(j?.message || `Invite failed (${r.status})`); return; }
+                          setInviteEmail("");
+                          fetchBoard(true);
+                        } catch (e:any) { alert(e?.message || 'Invite failed'); }
+                      }}
+                      className="px-4 py-2 rounded-md bg-indigo-600 text-white hover:bg-indigo-700"
+                      style={{ cursor:"pointer" }}
+                    >Invite</button>
+                  </div>
+                </div>
+
+                {/* People with Access Section */}
+                <div>
+                  <h4 className="font-medium text-slate-800 mb-3">People with Access</h4>
+                  <ul className="max-h-48 overflow-auto divide-y divide-slate-100 border border-slate-200 rounded-lg">
+                    <li className="py-3 px-3 flex items-center justify-between bg-slate-50">
                       <div>
                         <div className="text-sm font-medium">Owner</div>
                         <div className="text-xs text-slate-500">You</div>
                       </div>
-                      <span className="text-xs rounded bg-slate-100 px-2 py-1">owner</span>
+                      <span className="text-xs rounded bg-slate-200 px-2 py-1 font-medium">owner</span>
                     </li>
                     {collaborators.map((c)=> (
-                      <li key={c.email} className="py-2 flex items-center justify-between">
+                      <li key={c.email} className="py-3 px-3 flex items-center justify-between hover:bg-slate-50">
                         <div>
                           <div className="text-sm font-medium">{c.email}</div>
                           <div className="text-xs text-slate-500">{c.status || 'invited'}</div>
                         </div>
-                        <span className="text-xs rounded bg-slate-100 px-2 py-1">{c.role}</span>
+                        <div className="flex items-center gap-2">
+                          <select
+                            value={c.role}
+                            onChange={async (e) => {
+                              try {
+                                const r = await fetch(`${API_BASE}/api/boards/${actualBoardId}/collaborators/${encodeURIComponent(c.email)}/role`, {
+                                  method: "PUT",
+                                  headers: { "Content-Type": "application/json" },
+                                  credentials: "include",
+                                  body: JSON.stringify({ role: e.target.value })
+                                });
+                                if (!r.ok) { const j = await r.json().catch(()=>null); alert(j?.message || `Failed (${r.status})`); return; }
+                                fetchBoard(true);
+                              } catch (e:any) { alert(e?.message || 'Failed'); }
+                            }}
+                            className="text-xs border border-slate-300 rounded px-2 py-1"
+                            disabled={!isOwner}
+                          >
+                            <option value="viewer">Viewer</option>
+                            <option value="editor">Editor</option>
+                          </select>
+                          {isOwner && (
+                            <button
+                              onClick={async () => {
+                                if (!confirm(`Remove ${c.email} from this board?`)) return;
+                                try {
+                                                                     const r = await fetch(`${API_BASE}/api/boards/${actualBoardId}/collaborators/${encodeURIComponent(c.email)}`, {
+                                    method: "DELETE",
+                                    credentials: "include"
+                                  });
+                                  if (!r.ok) { const j = await r.json().catch(()=>null); alert(j?.message || `Failed (${r.status})`); return; }
+                                  fetchBoard(true);
+                                } catch (e:any) { alert(e?.message || 'Failed'); }
+                              }}
+                              className="text-xs text-red-600 hover:text-red-700 px-2 py-1"
+                              style={{ cursor: "pointer" }}
+                            >
+                              Remove
+                            </button>
+                          )}
+                        </div>
                       </li>
                     ))}
                   </ul>
@@ -909,14 +1044,14 @@ export function BoardCanvas() {
     if (!value.trim()) {
       const next = shapes.filter((s) => s.id !== shape.id);
       setShapes(next);
-      socketRef.current?.emit("shape-delete", { boardId, shapeId: shape.id });
+      socketRef.current?.emit("shape-delete", { boardId: actualBoardId, shapeId: shape.id });
       setTextEditor({ visible:false, x:0, y:0, value:"", shapeId:null });
       return;
     }
     const dim = measureText(value, shape.fontSize, shape.fontFamily);
     const next: TextShape = { ...shape, text:value, w:dim.width, h:dim.height };
     setShapes((prev) => prev.map((s) => (s.id === shape.id ? next : s)));
-    socketRef.current?.emit("shape-update", { boardId, shapeId: shape.id, props: { text: next.text, w: next.w, h: next.h } });
+    socketRef.current?.emit("shape-update", { boardId: actualBoardId, shapeId: shape.id, props: { text: next.text, w: next.w, h: next.h }, user:{uid:auth.currentUser?.uid} });
     setTextEditor({ visible:false, x:0, y:0, value:"", shapeId:null });
   }
 }
