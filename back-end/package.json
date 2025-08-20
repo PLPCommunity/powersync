@@ -20,6 +20,7 @@
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.15.0",
     "morgan": "^1.10.0",
+    "resend": "^4.8.0",
     "socket.io": "^4.8.1"
   },
   "devDependencies": {

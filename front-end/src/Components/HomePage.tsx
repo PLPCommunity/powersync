@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   ArrowRight,
   PlayCircle,
@@ -9,10 +9,28 @@ import {
   Zap,
   Users,
 } from "lucide-react";
-import { Link } from "react-router-dom";
-import Login from "../Components/Login"
+import { Link, useNavigate } from "react-router-dom";
+import Login from "../Components/Login";
+import { auth } from "../utils/firebase";
+import { useDispatch, useSelector } from "react-redux";
+import { login, logout, selectUser } from "../features/userSlice";
 
 export function HomePage() {
+  const user = useSelector(selectUser);
+  const dispatch = useDispatch();
+  const navigate = useNavigate();
+
+  const signOutOfApp = () => {
+    dispatch(logout);
+    auth.signOut();
+    window.location.reload();
+
+    if (user) {
+      auth.signOut();
+    }
+    navigate("/");
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-indigo-50/60 via-white to-white text-slate-800">
       <div
@@ -31,26 +49,35 @@ export function HomePage() {
           <span className="text-lg font-semibold tracking-tight">Diagramr</span>
         </Link>
         <nav className="hidden items-center gap-6 md:flex">
-          <a href="#features" className="text-sm text-slate-600 hover:text-slate-900">
+          <a
+            href="#features"
+            className="text-sm text-slate-600 hover:text-slate-900"
+          >
             Features
           </a>
-          <a href="https://progskill.com" target="_blank" className="text-sm text-slate-600 hover:text-slate-900">
+          <a
+            href="https://progskill.com"
+            target="_blank"
+            className="text-sm text-slate-600 hover:text-slate-900"
+          >
             Learn Coding
           </a>
-          <a href="#faq" className="text-sm text-slate-600 hover:text-slate-900">
+          <a
+            href="#faq"
+            className="text-sm text-slate-600 hover:text-slate-900"
+          >
             FAQ
           </a>
         </nav>
         {/* <Login/> */}
         <div className="flex items-center gap-3">
-        <Login/>
-          {/* <a
-            href="/board/new"
-            className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:from-indigo-500 hover:to-purple-500"
-          >
-            Get Started
-            <ArrowRight className="h-4 w-4" />
-          </a> */}
+          {!user ? (
+            <Login />
+          ) : (
+            <UserMenu user={user} signOutOfApp={signOutOfApp} />
+          )}
+
+          {/* <Login/> */}
         </div>
       </header>
 
@@ -66,8 +93,8 @@ export function HomePage() {
           </span>
         </h1>
         <p className="mx-auto mt-4 max-w-2xl text-base text-slate-600 md:text-lg">
-          The ultimate drawing board for creating stunning diagrams, wireframes, and visual concepts. Simple,
-          powerful, and built for teams.
+          The ultimate drawing board for creating stunning diagrams, wireframes,
+          and visual concepts. Simple, powerful, and built for teams.
         </p>
 
         <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
@@ -78,22 +105,27 @@ export function HomePage() {
             Get Started Free
             <ArrowRight className="h-4 w-4" />
           </a>
-          <Link to="/boards"
+          <Link
+            to="/boards"
             className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-6 py-3 text-sm font-semibold text-slate-800 shadow-sm transition hover:bg-slate-50"
           >
             <PlayCircle className="h-5 w-5" />
-           My Boards
+            My Boards
           </Link>
         </div>
       </section>
 
       {/* Features */}
-      <section id="features" className="mx-auto w-full max-w-6xl px-6 pb-16 pt-16">
+      <section
+        id="features"
+        className="mx-auto w-full max-w-6xl px-6 pb-16 pt-16"
+      >
         <h2 className="mb-8 text-center text-2xl font-bold tracking-tight text-slate-900 md:text-3xl">
           Everything you need to create
         </h2>
         <p className="mx-auto mb-12 max-w-2xl text-center text-slate-600">
-          Powerful features designed to make diagram creation effortless and enjoyable.
+          Powerful features designed to make diagram creation effortless and
+          enjoyable.
         </p>
 
         <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
@@ -133,10 +165,16 @@ export function HomePage() {
       {/* Big CTA */}
       <section className="mx-auto w-full max-w-5xl px-6 pb-24">
         <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-indigo-600 via-purple-600 to-fuchsia-600 p-10 text-center text-white shadow-[0_20px_70px_-20px_rgba(79,70,229,0.55)]">
-          <div className="absolute -right-24 -top-24 h-64 w-64 rounded-full bg-white/10 blur-2xl" aria-hidden />
-          <h3 className="text-2xl font-bold md:text-3xl">Ready to start creating?</h3>
+          <div
+            className="absolute -right-24 -top-24 h-64 w-64 rounded-full bg-white/10 blur-2xl"
+            aria-hidden
+          />
+          <h3 className="text-2xl font-bold md:text-3xl">
+            Ready to start creating?
+          </h3>
           <p className="mx-auto mt-2 max-w-2xl text-white/90">
-            Join thousands of creators who trust our platform for their visual projects.
+            Join thousands of creators who trust our platform for their visual
+            projects.
           </p>
           <div className="mt-6">
             <a
@@ -157,12 +195,20 @@ export function HomePage() {
             <div className="grid h-8 w-8 place-items-center rounded-lg bg-gradient-to-br from-indigo-500 to-purple-500 text-white">
               <PencilRuler className="h-4 w-4" />
             </div>
-            <span>© {new Date().getFullYear()} Diagramr. All rights reserved.</span>
+            <span>
+              © {new Date().getFullYear()} Diagramr. All rights reserved.
+            </span>
           </div>
           <div className="flex items-center gap-5">
-            <a href="#" className="hover:text-slate-700">Terms</a>
-            <a href="#" className="hover:text-slate-700">Privacy</a>
-            <a href="#" className="hover:text-slate-700">Contact</a>
+            <a href="#" className="hover:text-slate-700">
+              Terms
+            </a>
+            <a href="#" className="hover:text-slate-700">
+              Privacy
+            </a>
+            <a href="#" className="hover:text-slate-700">
+              Contact
+            </a>
           </div>
         </div>
       </footer>
@@ -186,6 +232,102 @@ function FeatureCard({
       </div>
       <h3 className="text-base font-semibold text-slate-900">{title}</h3>
       <p className="mt-1 text-sm leading-6 text-slate-600">{desc}</p>
+    </div>
+  );
+}
+
+type Props = {
+  user: { displayName?: string; email?: string } | null;
+  signOutOfApp: () => void;
+};
+
+export default function UserMenu({ user, signOutOfApp }: Props) {
+  const [open, setOpen] = useState(false);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    const onDocClick = (e: MouseEvent) => {
+      if (!open) return;
+      const t = e.target as Node;
+      if (btnRef.current?.contains(t) || menuRef.current?.contains(t)) return;
+      setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDocClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDocClick);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  const initial = user?.displayName?.[0] || user?.email?.[0] || "?";
+
+  return (
+    <div className="relative inline-flex">
+      <button
+        ref={btnRef}
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        className="bg-[#13ABC4] flex text-sm rounded-full ring-1 ring-black/5 focus:outline-none"
+      >
+        <span className="w-10 h-10 grid place-items-center font-mono uppercase text-lg text-white border-2 rounded-full cursor-pointer">
+          {initial}
+        </span>
+      </button>
+
+      <div
+        ref={menuRef}
+        role="menu"
+        aria-label="User menu"
+        className={`absolute right-0 mt-2 w-72 min-w-[16.5rem] bg-white shadow-md rounded-lg p-2 ring-1 ring-black/5 origin-top-right transition
+          ${
+            open
+              ? "opacity-100 scale-100"
+              : "opacity-0 scale-95 pointer-events-none"
+          }`}
+      >
+        <button
+          role="menuitem"
+          onClick={() => {
+            setOpen(false);
+            navigate("/mydashboard");
+          }}
+          className="w-full text-left flex items-center gap-x-3.5 py-2 px-3 rounded-md text-sm text-gray-800 hover:bg-gray-100 cursor-pointer"
+        >
+          My Profile
+        </button>
+        <button
+          role="menuitem"
+          onClick={() => {
+            setOpen(false);
+            navigate("/contact-us");
+          }}
+          className="w-full text-left flex items-center gap-x-3.5 py-2 px-3 rounded-md text-sm text-gray-800 hover:bg-gray-100 cursor-pointer"
+        >
+          Contact Support
+        </button>
+        <button
+          role="menuitem"
+          onClick={() => {
+            setOpen(false);
+            signOutOfApp();
+          }}
+          className="w-full text-left flex items-start gap-x-3.5 py-2 px-3 rounded-md text-sm bg-pink-100 hover:bg-pink-200 text-pink-600 cursor-pointer"
+        >
+          <div>
+            <span className="font-semibold">Sign Out</span>
+            <br />
+            <span>{!user ? "Guest" : user?.displayName}</span>
+          </div>
+        </button>
+      </div>
     </div>
   );
 }

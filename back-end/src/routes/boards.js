@@ -1,5 +1,6 @@
 const express = require('express');
 const Board = require('../models/Board');
+const { sendInviteEmail } = require('../utils/mailer');
 const { verifyFirebase } = require('../middleware/auth');
 
 const router = express.Router();
@@ -26,20 +27,33 @@ router.post('/', async (req, res) => {
   }
 });
 
-// List (only mine)
+// List (mine or I'm a collaborator)
 router.get('/', async (req, res) => {
   try {
-    const boards = await Board.find({ ownerId: req.user.uid }).sort({ updatedAt: -1 });
+    const boards = await Board.find({
+      $or: [
+        { ownerId: req.user.uid },
+        { 'collaborators.uid': req.user.uid },
+        { 'collaborators.email': req.user.email?.toLowerCase() },
+      ],
+    }).sort({ updatedAt: -1 });
     return res.json(boards);
   } catch (e) {
     return res.status(500).json({ message: 'Failed to fetch boards', error: e.message });
   }
 });
 
-// Get one (only mine)
+// Get one (owner or collaborator)
 router.get('/:id', async (req, res) => {
   try {
-    const board = await Board.findOne({ _id: req.params.id, ownerId: req.user.uid });
+    const board = await Board.findOne({
+      _id: req.params.id,
+      $or: [
+        { ownerId: req.user.uid },
+        { 'collaborators.uid': req.user.uid },
+        { 'collaborators.email': req.user.email?.toLowerCase() },
+      ],
+    });
     if (!board) return res.status(404).json({ message: 'Board not found' });
     return res.json(board);
   } catch (e) {
@@ -47,7 +61,7 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// Update (only mine)
+// Update name/description (owner or editor)
 router.put('/:id', async (req, res) => {
   try {
     const { name, description } = req.body;
@@ -55,30 +69,55 @@ router.put('/:id', async (req, res) => {
     if (typeof name === 'string') update.name = name.trim() || 'Untitled document';
     if (typeof description === 'string') update.description = description.trim();
 
-    const board = await Board.findOneAndUpdate(
-      { _id: req.params.id, ownerId: req.user.uid },
-      update,
-      { new: true }
-    );
+    const board = await Board.findOne({
+      _id: req.params.id,
+      $or: [
+        { ownerId: req.user.uid },
+        { 'collaborators.uid': req.user.uid, 'collaborators.role': 'editor' },
+        { 'collaborators.email': req.user.email?.toLowerCase(), 'collaborators.role': 'editor' },
+      ],
+    });
     if (!board) return res.status(404).json({ message: 'Board not found' });
-    return res.json(board);
+    const updated = await Board.findByIdAndUpdate(board._id, update, { new: true });
+    return res.json(updated);
   } catch (e) {
     return res.status(500).json({ message: 'Failed to update board', error: e.message });
   }
 });
 
-// Save shapes (only mine)
+// Save shapes (owner or editor)
 router.put('/:id/shapes', async (req, res) => {
   try {
     const { shapes } = req.body;
     if (!Array.isArray(shapes)) return res.status(400).json({ message: 'shapes must be an array' });
 
-    const board = await Board.findOneAndUpdate(
-      { _id: req.params.id, ownerId: req.user.uid },
-      { $set: { shapes } },
-      { new: true }
-    );
+    const board = await Board.findOne({
+      _id: req.params.id,
+      $or: [
+        { ownerId: req.user.uid },
+        { 'collaborators.uid': req.user.uid, 'collaborators.role': 'editor' },
+        { 'collaborators.email': req.user.email?.toLowerCase(), 'collaborators.role': 'editor' },
+      ],
+    });
     if (!board) return res.status(404).json({ message: 'Board not found' });
+
+    // Merge audit fields per shape id
+    const prevById = new Map();
+    for (const s of board.shapes || []) prevById.set(s.id, s);
+    const nowIso = new Date().toISOString();
+    const uid = req.user.uid;
+    const merged = shapes.map((s) => {
+      const prev = prevById.get(s.id) || {};
+      return {
+        ...s,
+        _createdBy: prev._createdBy || uid,
+        _createdAt: prev._createdAt || nowIso,
+        _updatedBy: uid,
+        _updatedAt: nowIso,
+      };
+    });
+
+    await Board.updateOne({ _id: board._id }, { $set: { shapes: merged } });
     return res.json({ ok: true });
   } catch (e) {
     return res.status(500).json({ message: 'Failed to save shapes', error: e.message });
@@ -93,6 +132,77 @@ router.delete('/:id', async (req, res) => {
     return res.json({ ok: true });
   } catch (e) {
     return res.status(500).json({ message: 'Failed to delete board', error: e.message });
+  }
+});
+
+// Invite collaborator (owner only)
+router.post('/:id/invite', async (req, res) => {
+  try {
+    const { email, role } = req.body || {};
+    if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+      return res.status(400).json({ message: 'Valid email is required' });
+    }
+    if (!['editor', 'viewer'].includes(role)) {
+      return res.status(400).json({ message: 'Invalid role' });
+    }
+
+    const board = await Board.findOne({ _id: req.params.id, ownerId: req.user.uid });
+    if (!board) return res.status(404).json({ message: 'Board not found' });
+
+    const normalizedEmail = String(email).toLowerCase().trim();
+    const exists = board.collaborators?.some((c) => c.email === normalizedEmail);
+    if (exists) return res.status(409).json({ message: 'Collaborator already invited' });
+
+    const doc = {
+      email: normalizedEmail,
+      uid: '',
+      role,
+      invitedByUid: req.user.uid,
+      invitedByEmail: req.user.email || '',
+      invitedAt: new Date(),
+      status: 'invited',
+    };
+    await Board.updateOne({ _id: board._id }, { $push: { collaborators: doc } });
+
+    const origin = process.env.CLIENT_ORIGIN || 'http://localhost:3000';
+    const inviteLink = `${origin}/board/${board._id}`;
+    try {
+      await sendInviteEmail({
+        to: normalizedEmail,
+        boardName: board.name,
+        inviterEmail: req.user.email || '',
+        inviteLink,
+        role,
+      });
+    } catch (e) {
+      // Continue even if email sending fails
+      console.warn('sendInviteEmail failed:', e.message);
+    }
+
+    return res.json({ ok: true });
+  } catch (e) {
+    return res.status(500).json({ message: 'Failed to invite collaborator', error: e.message });
+  }
+});
+
+// Accept invite (by invited user)
+router.post('/:id/accept', async (req, res) => {
+  try {
+    const board = await Board.findOne({ _id: req.params.id, 'collaborators.email': req.user.email?.toLowerCase() });
+    if (!board) return res.status(404).json({ message: 'Invite not found' });
+    await Board.updateOne(
+      { _id: board._id, 'collaborators.email': req.user.email?.toLowerCase() },
+      {
+        $set: {
+          'collaborators.$.uid': req.user.uid,
+          'collaborators.$.status': 'accepted',
+          'collaborators.$.acceptedAt': new Date(),
+        },
+      }
+    );
+    return res.json({ ok: true });
+  } catch (e) {
+    return res.status(500).json({ message: 'Failed to accept invite', error: e.message });
   }
 });
 

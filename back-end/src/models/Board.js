@@ -29,6 +29,25 @@ const BoardSchema = new mongoose.Schema(
       type: [mongoose.Schema.Types.Mixed],
       default: [],
     },
+    // 👥 collaborators invited to this board
+    collaborators: {
+      type: [
+        new mongoose.Schema(
+          {
+            email: { type: String, required: true, index: true, lowercase: true, trim: true },
+            uid: { type: String, default: '', index: true },
+            role: { type: String, enum: ['editor', 'viewer'], default: 'viewer' },
+            invitedByUid: { type: String, default: '' },
+            invitedByEmail: { type: String, default: '' },
+            invitedAt: { type: Date, default: Date.now },
+            acceptedAt: { type: Date },
+            status: { type: String, enum: ['invited', 'accepted'], default: 'invited' },
+          },
+          { _id: false }
+        ),
+      ],
+      default: [],
+    },
   },
   { timestamps: true }
 );

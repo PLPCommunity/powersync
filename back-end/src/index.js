@@ -122,10 +122,21 @@ io.on('connection', (socket) => {
   socket.on('shape-create', async (data) => {
     try {
       if (!data || !data.boardId || !data.shape) return;
-      await Board.updateOne(
-        { _id: data.boardId },
-        { $push: { shapes: data.shape } }
-      );
+      const board = await Board.findById(data.boardId).select('ownerId collaborators');
+      if (!board) return;
+      const uid = data.user?.uid || '';
+      const isOwner = uid && String(board.ownerId) === uid;
+      const isEditor = (board.collaborators || []).some((c) => (c.uid === uid) && c.role === 'editor');
+      if (!isOwner && !isEditor) return;
+      // annotate shape with audit fields if missing
+      const shape = {
+        ...data.shape,
+        _createdBy: data.user?.uid || '',
+        _createdAt: new Date().toISOString(),
+        _updatedBy: data.user?.uid || '',
+        _updatedAt: new Date().toISOString(),
+      };
+      await Board.updateOne({ _id: data.boardId }, { $push: { shapes: shape } });
       io.to(data.boardId).emit('shape-created', { shape: data.shape });
     } catch (e) {
       console.error('shape-create error:', e.message);
@@ -135,8 +146,14 @@ io.on('connection', (socket) => {
   socket.on('shape-update', async (data) => {
     try {
       if (!data || !data.boardId || !data.shapeId) return;
+      const board = await Board.findById(data.boardId).select('ownerId collaborators');
+      if (!board) return;
+      const uid = data.user?.uid || '';
+      const isOwner = uid && String(board.ownerId) === uid;
+      const isEditor = (board.collaborators || []).some((c) => (c.uid === uid) && c.role === 'editor');
+      if (!isOwner && !isEditor) return;
       const props = data.props || {};
-      const set = {};
+      const set = { 'shapes.$[elem]._updatedBy': data.user?.uid || '', 'shapes.$[elem]._updatedAt': new Date().toISOString() };
       Object.keys(props).forEach((k) => (set[`shapes.$[elem].${k}`] = props[k]));
       if (Object.keys(set).length) {
         await Board.updateOne(
@@ -154,6 +171,12 @@ io.on('connection', (socket) => {
   socket.on('shape-delete', async (data) => {
     try {
       if (!data || !data.boardId || !data.shapeId) return;
+      const board = await Board.findById(data.boardId).select('ownerId collaborators');
+      if (!board) return;
+      const uid = data.user?.uid || '';
+      const isOwner = uid && String(board.ownerId) === uid;
+      const isEditor = (board.collaborators || []).some((c) => (c.uid === uid) && c.role === 'editor');
+      if (!isOwner && !isEditor) return;
       await Board.updateOne(
         { _id: data.boardId },
         { $pull: { shapes: { id: data.shapeId } } }

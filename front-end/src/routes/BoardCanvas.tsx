@@ -3,6 +3,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { io, Socket } from "socket.io-client";
 import { auth } from "../utils/firebase";
+import { } from "react-redux";
 
 /* -------------------- Types -------------------- */
 type ShapeType =
@@ -10,6 +11,15 @@ type ShapeType =
   | "line" | "arrow" | "arrowDouble" | "orthogonal"
   | "text" | "freehand" | "cylinder" | "cloud" | "callout" | "starburst";
 type Tool = "select" | ShapeType;
+type CollaboratorRole = "editor" | "viewer";
+type Collaborator = {
+  email: string;
+  uid?: string;
+  role: CollaboratorRole;
+  invitedAt?: string;
+  acceptedAt?: string;
+  status?: "invited" | "accepted";
+};
 
 type RectLike = {
   id: string;
@@ -71,7 +81,9 @@ function rectHandlesRotated(s: RectLike): HandlePoint[] {
 }
 
 /* -------------------- Component -------------------- */
+import { } from "../features/userSlice";
 export function BoardCanvas() {
+  
   const { id: boardId } = useParams();
   const navigate = useNavigate();
 
@@ -80,6 +92,12 @@ export function BoardCanvas() {
   const [shapes, setShapes] = useState<Shape[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false); // <-- gate autosaves until data is fetched
+  const [collaborators, setCollaborators] = useState<Collaborator[]>([]);
+  const [shareOpen, setShareOpen] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteRole, setInviteRole] = useState<CollaboratorRole>("viewer");
+  const [canEdit, setCanEdit] = useState(false);
+  const [isOwner, setIsOwner] = useState(false);
 
   // Track last server-synced state to avoid unnecessary PUTs and to detect "dirty"
   const serverNameRef = useRef<string>("Untitled document");
@@ -155,12 +173,19 @@ export function BoardCanvas() {
       // Update local state with server data
       const nextName = data?.name || "Untitled document";
       const nextShapes: Shape[] = Array.isArray(data?.shapes) ? data.shapes : [];
+      const nextCollabs: Collaborator[] = Array.isArray(data?.collaborators) ? data.collaborators : [];
 
       serverNameRef.current = nextName;
       lastSavedShapesRef.current = JSON.stringify(nextShapes);
 
       setBoardName(nextName);
       setShapes(nextShapes);
+      setCollaborators(nextCollabs);
+      const u = auth.currentUser; const email = u?.email?.toLowerCase();
+      const amOwner = data?.ownerId && u?.uid && data.ownerId === u.uid;
+      const coll = nextCollabs.find(c=> (c.uid && c.uid===u?.uid) || (c.email && c.email.toLowerCase()===email));
+      setIsOwner(!!amOwner);
+      setCanEdit(!!amOwner || (coll?.role === 'editor'));
       setLoaded(true); // <-- allow autosaves after first load
     } catch {
       // ignore for now
@@ -174,7 +199,7 @@ export function BoardCanvas() {
     let mounted = true;
     socketRef.current = io(API_BASE, { transports: ["websocket"] });
 
-    const unsub = auth.onAuthStateChanged(async (u) => {
+    const unsub = auth.onAuthStateChanged(async (u: any) => {
       if (!mounted) return;
       if (!u) {
         navigate("/boards");
@@ -183,7 +208,10 @@ export function BoardCanvas() {
       const ok = await ensureSession();
       if (!ok) { navigate("/boards"); return; }
       await fetchBoard(true); // force initial fetch & prevent autosave from wiping
-      socketRef.current?.emit("join-board", { boardId });
+      try {
+        await fetch(`${API_BASE}/api/boards/${boardId}/accept`, { method: "POST", credentials: "include" });
+      } catch {}
+      socketRef.current?.emit("join-board", { boardId, userId: u?.uid, userName: u?.displayName });
     });
 
     // refresh when focus returns (if not dirty) + background poll
@@ -456,6 +484,14 @@ export function BoardCanvas() {
       const hit = hitTest(p.x, p.y, shapes);
       if (hit) {
         setSelectedId(hit.shape.id);
+        if (!canEdit) {
+          // viewers can select but not mutate
+          resizeHandleRef.current = null;
+          isDraggingRef.current = false;
+          draggedShapeRef.current = null;
+          rotateRef.current = null;
+          return;
+        }
         resizeHandleRef.current = hit.handle;
         isDraggingRef.current = true;
         draggedShapeRef.current = JSON.parse(JSON.stringify(hit.shape)) as Shape;
@@ -472,6 +508,9 @@ export function BoardCanvas() {
     }
 
     if (tool === "text") return;
+
+    // prevent creating shapes if cannot edit (selection handled above and already returned)
+    if (!canEdit) return;
 
     const id = genId(); const stroke = "#111111"; const strokeWidth = 2;
     if (tool === "freehand") {
@@ -506,7 +545,7 @@ export function BoardCanvas() {
     };
     setShapes((prev) => [...prev, base]);
     setSelectedId(id);
-    socketRef.current?.emit("shape-create", { boardId, shape: base });
+    socketRef.current?.emit("shape-create", { boardId, shape: base, user: { uid: auth.currentUser?.uid } });
     setTextEditor({ visible: true, x: p.x, y: p.y, value: "", shapeId: id });
   }
 
@@ -575,12 +614,12 @@ export function BoardCanvas() {
 
     if (draftShapeRef.current && isFreehand(draftShapeRef.current)) {
       const d = draftShapeRef.current as Freehand; d.bbox = computeBBox(d.points);
-      setShapes((prev) => [...prev, d]); socketRef.current?.emit("shape-create",{boardId,shape:d}); draftShapeRef.current=null;
+      setShapes((prev) => [...prev, d]); socketRef.current?.emit("shape-create",{boardId,shape:d,user:{uid:auth.currentUser?.uid}}); draftShapeRef.current=null;
     }
     if (draftShapeRef.current && !isFreehand(draftShapeRef.current)) {
       const d = draftShapeRef.current as any; let toAdd: Shape = d as Shape;
       if (isRectLike(d)) { const norm = normalizeRect({ x:d.x, y:d.y, w:d.w, h:d.h }); toAdd = { ...(d as RectLike), ...norm } as RectLike; }
-      setShapes((prev) => [...prev, toAdd]); socketRef.current?.emit("shape-create",{boardId,shape:toAdd}); draftShapeRef.current=null;
+      setShapes((prev) => [...prev, toAdd]); socketRef.current?.emit("shape-create",{boardId,shape:toAdd,user:{uid:auth.currentUser?.uid}}); draftShapeRef.current=null;
     }
 
     if (isDraggingRef.current && draggedShapeRef.current && mutatedDuringDragRef.current) {
@@ -588,7 +627,7 @@ export function BoardCanvas() {
       if (orig) {
         setShapes((prev) => prev.map((s) => (s.id === finalShape.id ? finalShape : s)));
         const diff = diffShape(orig, finalShape);
-        if (Object.keys(diff).length > 0) socketRef.current?.emit("shape-update", { boardId, shapeId: finalShape.id, props: diff });
+        if (Object.keys(diff).length > 0) socketRef.current?.emit("shape-update", { boardId, shapeId: finalShape.id, props: diff, user:{uid:auth.currentUser?.uid} });
       }
     }
 
@@ -596,7 +635,7 @@ export function BoardCanvas() {
   }
 
   /* -------------------- Hit test + helpers -------------------- */
-  function rectHandles(s:{x:number;y:number;w:number;h:number}){ const x2=s.x+s.w,y2=s.y+s.h; return [{name:"nw",x:s.x,y:s.y},{name:"ne",x:x2,y:s.y},{name:"sw",x:s.x,y:y2},{name:"se",x:x2,y:y2}] as any; }
+  // function rectHandles(s:{x:number;y:number;w:number;h:number}){ const x2=s.x+s.w,y2=s.y+s.h; return [{name:"nw",x:s.x,y:s.y},{name:"ne",x:x2,y:s.y},{name:"sw",x:s.x,y:y2},{name:"se",x:x2,y:y2}] as any; }
   function hitTest(x:number,y:number,list:Shape[]):{shape:Shape;handle:string|null}|null{
     for (let i=list.length-1;i>=0;i--){
       const s=list[i];
@@ -632,8 +671,8 @@ export function BoardCanvas() {
   }
   const copySelected=()=>{ const id=selectedIdRef.current; if (!id) return; const s=shapesRef.current.find(sh=>sh.id===id); if (!s) return; clipboardRef.current = JSON.parse(JSON.stringify(s)); };
   const cutSelected=()=>{ copySelected(); deleteSelected(); };
-  const pasteClipboard=()=>{ const clip=clipboardRef.current; if (!clip) return; const pasted=cloneForPaste(clip); setShapes(prev=>[...prev,pasted]); setSelectedId(pasted.id); socketRef.current?.emit("shape-create",{boardId,shape:pasted}); };
-  const deleteSelected=()=>{ const id=selectedIdRef.current; if (!id) return; isDraggingRef.current=false; draggedShapeRef.current=null; setShapes(prev=>prev.filter(s=>s.id!==id)); setSelectedId(null); socketRef.current?.emit("shape-delete",{boardId,shapeId:id}); };
+  const pasteClipboard=()=>{ const clip=clipboardRef.current; if (!clip) return; const pasted=cloneForPaste(clip); setShapes(prev=>[...prev,pasted]); setSelectedId(pasted.id); socketRef.current?.emit("shape-create",{boardId,shape:pasted,user:{uid:auth.currentUser?.uid}}); };
+  const deleteSelected=()=>{ const id=selectedIdRef.current; if (!id) return; isDraggingRef.current=false; draggedShapeRef.current=null; setShapes(prev=>prev.filter(s=>s.id!==id)); setSelectedId(null); socketRef.current?.emit("shape-delete",{boardId,shapeId:id,user:{uid:auth.currentUser?.uid}}); };
 
   useEffect(()=> {
     const isTypingTarget=()=>{ const el=document.activeElement as HTMLElement|null;
@@ -697,13 +736,22 @@ export function BoardCanvas() {
               </button>
             ))}
           </div>
-          <input
-            value={boardName}
-            onChange={(e)=>setBoardName(e.target.value)}
-            placeholder="Untitled document"
-            style={{ border:"none", fontSize:16, textAlign:"right", outline:"none" }}
-            className="font-semibold"
-          />
+          <div className="flex items-center gap-2">
+            <input
+              value={boardName}
+              onChange={(e)=>setBoardName(e.target.value)}
+              placeholder="Untitled document"
+              style={{ border:"none", fontSize:16, textAlign:"right", outline:"none" }}
+              className="font-semibold"
+            />
+            <button
+              className="px-3 py-1.5 rounded-md bg-indigo-600 text-white hover:bg-indigo-700"
+              style={{ cursor: "pointer", opacity: isOwner ? 1 : 0.6 }}
+              onClick={()=> isOwner && setShareOpen(true)}
+              title={isOwner ? "Share" : "Only owners can share"}
+            >Share</button>
+            
+          </div>
         </div>
 
         {selectedId && (()=> {
@@ -756,6 +804,68 @@ export function BoardCanvas() {
             onMouseLeave={handlePointerUp}
             style={{ width:"100%", height:"100%", display:"block", cursor: tool==="select" ? "default" : "crosshair", background:"transparent" }}
           />
+          {shareOpen && (
+            <div style={{ position:"absolute", inset:0, background:"#0006", display:"grid", placeItems:"center" }} onClick={()=> setShareOpen(false)}>
+              <div onClick={(e)=> e.stopPropagation()} style={{ width:420, background:"#fff", borderRadius:12, padding:16, boxShadow:"0 10px 30px rgba(0,0,0,0.2)" }}>
+                <div className="flex items-center justify-between">
+                  <h3 className="font-semibold">Share "{boardName}"</h3>
+                  <button onClick={()=> setShareOpen(false)} style={{ cursor:"pointer" }}>✕</button>
+                </div>
+                <div className="mt-3 flex gap-2">
+                  <input
+                    value={inviteEmail}
+                    onChange={(e)=> setInviteEmail(e.target.value)}
+                    placeholder="Invite by email"
+                    style={{ flex:1, border:"1px solid #e5e7eb", borderRadius:8, padding:"8px 10px" }}
+                  />
+                  <select value={inviteRole} onChange={(e)=> setInviteRole(e.target.value as CollaboratorRole)} style={{ border:"1px solid #e5e7eb", borderRadius:8, padding:"8px 10px" }}>
+                    <option value="viewer">Viewer</option>
+                    <option value="editor">Editor</option>
+                  </select>
+                  <button
+                    onClick={async ()=>{
+                      const email = inviteEmail.trim(); if (!email) return;
+                      try {
+                        const r = await fetch(`${API_BASE}/api/boards/${boardId}/invite`, {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          credentials: "include",
+                          body: JSON.stringify({ email, role: inviteRole })
+                        });
+                        if (!r.ok) { const j = await r.json().catch(()=>null); alert(j?.message || `Invite failed (${r.status})`); return; }
+                        setInviteEmail("");
+                        // refresh collaborators list
+                        fetchBoard(true);
+                      } catch (e:any) { alert(e?.message || 'Invite failed'); }
+                    }}
+                    className="px-3 py-2 rounded-md bg-slate-900 text-white"
+                    style={{ cursor:"pointer" }}
+                  >Invite</button>
+                </div>
+                <div className="mt-4">
+                  <h4 className="text-sm font-medium text-slate-700 mb-1">People with access</h4>
+                  <ul className="max-h-48 overflow-auto divide-y divide-slate-100">
+                    <li className="py-2 flex items-center justify-between">
+                      <div>
+                        <div className="text-sm font-medium">Owner</div>
+                        <div className="text-xs text-slate-500">You</div>
+                      </div>
+                      <span className="text-xs rounded bg-slate-100 px-2 py-1">owner</span>
+                    </li>
+                    {collaborators.map((c)=> (
+                      <li key={c.email} className="py-2 flex items-center justify-between">
+                        <div>
+                          <div className="text-sm font-medium">{c.email}</div>
+                          <div className="text-xs text-slate-500">{c.status || 'invited'}</div>
+                        </div>
+                        <span className="text-xs rounded bg-slate-100 px-2 py-1">{c.role}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            </div>
+          )}
           {textEditor.visible && (()=> {
             const scr=worldToScreen({x:textEditor.x,y:textEditor.y});
             return (
