@@ -90,14 +90,6 @@ app.post('/api/sessionLogin', async (req, res) => {
 
 
 app.post('/api/sessionLogout', async (req, res) => {
-  // If you want to revoke on Firebase side, you could verify and revoke refresh tokens:
-  // try {
-  //   const cookie = req.cookies[SESSION_COOKIE_NAME];
-  //   if (cookie) {
-  //     const decoded = await admin.auth().verifySessionCookie(cookie, true);
-  //     await admin.auth().revokeRefreshTokens(decoded.sub);
-  //   }
-  // } catch {}
   res.clearCookie(SESSION_COOKIE_NAME, { ...baseCookieOptions(), maxAge: 0 });
   return res.json({ ok: true });
 });
