@@ -14,12 +14,11 @@ function ensureResend() {
 const APP_NAME = process.env.APP_NAME || 'DrawBoard';
 const SUPPORT_EMAIL = process.env.SUPPORT_EMAIL || 'noreply@progskill.com';
 
-function inviteEmailHtml({ boardName, inviterEmail,inviterName, inviteLink, role }) {
+function inviteEmailHtml({ boardName, inviterEmail, inviteLink, role }) {
   const name = escapeHtml(boardName || 'Untitled document');
   const rolePretty = escapeHtml(role || 'edit');
   const inviter = escapeHtml(inviterEmail || 'A teammate');
   const origin = safeOrigin(inviteLink);
-  const boardOwner =  escapeHtml(inviterName || 'A teammate');
 
   return `
   <!-- Preheader (hidden in most clients) -->
@@ -38,7 +37,7 @@ function inviteEmailHtml({ boardName, inviterEmail,inviterName, inviteLink, role
               background: linear-gradient(135deg, #6a11cb 0%, #2575fc 100%);
               padding: 28px 24px; text-align:center; color:#fff;">
               <div style="font:700 22px/1.25 Inter,Arial,sans-serif; letter-spacing:.2px;">
-                🎨 ${boardOwner} You have been invited to a <strong>${name}</strong> board
+                🎨You have been invited to a <strong>${name}</strong> board
               </div>
             </td>
           </tr>

@@ -5,12 +5,15 @@ import { HomePage } from "./Components/HomePage";
 import { BoardCanvas } from "./routes/BoardCanvas";
 import AllBoards from "./Components/AllBoards";
 import './App.css';
+import Header from "./Components/Header";
 import("preline");
 
 // const BoardCanvas = lazy(() => import("./components/BoardCanvas"));
 
 export default function App() {
   return (
+    <main>
+        <Header/>
       <Routes>
         <Route path="/" element={<HomePage />} />
         <Route path="/boards" element={<AllBoards />} />
@@ -28,5 +31,6 @@ export default function App() {
         />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
+      </main>
   );
 }
