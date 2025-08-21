@@ -995,7 +995,7 @@ export function BoardCanvas({ isPublic = false }: { isPublic?: boolean }) {
                               onClick={async () => {
                                 if (!confirm(`Remove ${c.email} from this board?`)) return;
                                 try {
-                                                                     const r = await fetch(`${API_BASE}/api/boards/${actualBoardId}/collaborators/${encodeURIComponent(c.email)}`, {
+                                    const r = await fetch(`${API_BASE}/api/boards/${actualBoardId}/collaborators/${encodeURIComponent(c.email)}`, {
                                     method: "DELETE",
                                     credentials: "include"
                                   });
