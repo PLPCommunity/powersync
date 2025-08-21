@@ -208,23 +208,9 @@ export default function AllBoards() {
   if (!user) {
     return (
       <main className="min-h-screen bg-slate-50">
-        <header className="mx-auto flex max-w-6xl items-center justify-between px-6 py-5">
-          <Link to="/" className="flex items-center gap-3">
-            <div className="grid h-9 w-9 place-items-center rounded-xl bg-slate-900 text-white">
-              <svg viewBox="0 0 24 24" className="h-5 w-5" fill="currentColor">
-                <path d="M17 8h-1V6a4 4 0 10-8 0v2H7a2 2 0 00-2 2v8a2 2 0 002 2h10a2 2 0 002-2v-8a2 2 0 00-2-2zm-7-2a2 2 0 114 0v2H10V6zm8 12H6v-8h12v8z" />
-              </svg>
-            </div>
-            <span className="text-lg font-semibold">DrawBoard</span>
-          </Link>
-          <nav className="hidden gap-6 text-sm md:flex">
-            <span className="text-slate-500">Features</span>
-            <span className="text-slate-500">Pricing</span>
-            <span className="text-slate-500">Docs</span>
-          </nav>
-        </header>
+     
 
-        <main className="mx-auto max-w-6xl px-6 pb-24 pt-10 md:pt-16">
+        <main className="mx-auto max-w-7xl  pb-24 pt-10 md:pt-52">
           <section className="mx-auto max-w-3xl text-center">
             <h1 className="text-3xl font-extrabold tracking-tight text-slate-900 sm:text-4xl md:text-5xl">
               Sign in to start drawing together

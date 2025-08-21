@@ -40,13 +40,12 @@ export function HomePage() {
         </p>
 
         <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
-          <a
-            href="/boards"
+          <Link to="/boards"
             className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 px-6 py-3 text-sm font-semibold text-white shadow-sm transition hover:from-indigo-500 hover:to-purple-500"
           >
             Get Started Free
             <ArrowRight className="h-4 w-4" />
-          </a>
+          </Link>
           <Link
             to="/boards"
             className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-6 py-3 text-sm font-semibold text-slate-800 shadow-sm transition hover:bg-slate-50"

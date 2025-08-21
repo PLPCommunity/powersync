@@ -86,7 +86,7 @@ const Login = () => {
         onClick={() => {
           console.log("Hello world");
         }}
-        className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:from-indigo-500 hover:to-purple-500 cursor-pointer"
+        className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 px-6 py-3 text-sm font-medium text-white shadow-sm transition hover:from-indigo-500 hover:to-purple-500 cursor-pointer"
         data-hs-overlay="#hs-static-backdrop-modal"
       >
         Get Started

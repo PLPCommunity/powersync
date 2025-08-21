@@ -31,7 +31,7 @@ const Header = () => {
       navigate("/");
     };
   return (
-    <div className="min-h-screen bg-gradient-to-b from-indigo-50/60 via-white to-white text-slate-800">
+    <div className="bg-gradient-to-b from-indigo-50/60 via-indigo-50/50 to-indigo-50/50 text-slate-800 fixed w-full">
          <div
         aria-hidden
         className="pointer-events-none fixed inset-0 -z-10 overflow-hidden"
