@@ -122,7 +122,7 @@ type Props = {
           onClick={() => setOpen((o) => !o)}
           aria-haspopup="menu"
           aria-expanded={open}
-          className="bg-[#13ABC4] flex text-sm rounded-full ring-1 ring-black/5 focus:outline-none"
+          className="bg-purple-600 flex text-sm rounded-full ring-1 ring-black/5 focus:outline-none"
         >
           <span className="w-10 h-10 grid place-items-center font-mono uppercase text-lg text-white border-2 rounded-full cursor-pointer">
             {initial}
@@ -144,11 +144,11 @@ type Props = {
             role="menuitem"
             onClick={() => {
               setOpen(false);
-              navigate("/mydashboard");
+              navigate("/boards");
             }}
             className="w-full text-left flex items-center gap-x-3.5 py-2 px-3 rounded-md text-sm text-gray-800 hover:bg-gray-100 cursor-pointer"
           >
-            My Profile
+            My boards
           </button>
           <button
             role="menuitem"
@@ -166,7 +166,7 @@ type Props = {
               setOpen(false);
               signOutOfApp();
             }}
-            className="w-full text-left flex items-start gap-x-3.5 py-2 px-3 rounded-md text-sm bg-pink-100 hover:bg-pink-200 text-pink-600 cursor-pointer"
+            className="w-full text-left flex items-start gap-x-3.5 py-2 px-3 rounded-md text-sm bg-pink-100 hover:bg-pink-200 text-purple-600 cursor-pointer"
           >
             <div>
               <span className="font-semibold">Sign Out</span>
