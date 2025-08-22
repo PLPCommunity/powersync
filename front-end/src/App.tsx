@@ -28,7 +28,6 @@ function LayoutNoHeader() {
 export default function App() {
   return (
     <Routes>
-      {/* Pages WITH header */}
       <Route element={<LayoutWithHeader />}>
         <Route path="/" element={<HomePage />} />
         <Route path="/boards" element={<AllBoards />} />
