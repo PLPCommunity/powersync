@@ -42,6 +42,43 @@ mongoose
 // --- Health ---
 app.get('/api/ping', (req, res) => res.json({ msg: 'pong' }));
 
+// --- Test endpoints for debugging ---
+app.get('/api/test/public-boards', async (req, res) => {
+  try {
+    const boards = await Board.find({ 'publicAccess.enabled': true })
+      .select('name publicAccess.linkId publicAccess.role')
+      .lean();
+    
+    res.json({
+      message: 'Public boards found',
+      count: boards.length,
+      boards: boards.map(b => ({
+        name: b.name,
+        linkId: b.publicAccess?.linkId,
+        role: b.publicAccess?.role
+      }))
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/test/boards-count', async (req, res) => {
+  try {
+    const totalBoards = await Board.countDocuments();
+    const publicBoards = await Board.countDocuments({ 'publicAccess.enabled': true });
+    const privateBoards = totalBoards - publicBoards;
+    
+    res.json({
+      total: totalBoards,
+      public: publicBoards,
+      private: privateBoards
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // --- Session cookie routes (Firebase Session Cookies) ---
 function baseCookieOptions() {
   const isProd = process.env.NODE_ENV === 'production';

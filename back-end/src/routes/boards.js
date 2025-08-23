@@ -69,16 +69,34 @@ router.get('/:id', async (req, res) => {
 // Get one by public link (no auth required)
 router.get('/public/:linkId', async (req, res) => {
   try {
+    const { linkId } = req.params;
+    console.log(`[Public Board] Attempting to fetch board with linkId: ${linkId}`);
+    
     const board = await Board.findOne({
       'publicAccess.enabled': true,
-      'publicAccess.linkId': req.params.linkId,
+      'publicAccess.linkId': linkId,
     })
     .select('name description publicAccess shapes updatedAt createdAt')
     .lean();
-    if (!board) return res.status(404).json({ message: 'Public board not found' });
+    
+    if (!board) {
+      console.log(`[Public Board] No board found for linkId: ${linkId}`);
+      return res.status(404).json({ 
+        message: 'Public board not found', 
+        error: 'The board either does not exist or is not publicly accessible',
+        linkId: linkId
+      });
+    }
+    
+    console.log(`[Public Board] Successfully found board: ${board.name} (ID: ${board._id})`);
     return res.json(board);
   } catch (e) {
-    return res.status(500).json({ message: 'Failed to fetch public board', error: e.message });
+    console.error(`[Public Board] Error fetching public board:`, e);
+    return res.status(500).json({ 
+      message: 'Failed to fetch public board', 
+      error: e.message,
+      linkId: req.params.linkId
+    });
   }
 });
 
@@ -308,80 +326,6 @@ router.put('/:id/public-access', async (req, res) => {
   }
 });
 
-// Update collaborator role (owner only)
-router.put('/:id/collaborators/:email/role', async (req, res) => {
-  try {
-    const { role } = req.body || {};
-    if (!['editor', 'viewer'].includes(role)) {
-      return res.status(400).json({ message: 'Invalid role' });
-    }
 
-    const board = await Board.findOne({ _id: req.params.id, ownerId: req.user.uid });
-    if (!board) return res.status(404).json({ message: 'Board not found' });
-
-    const result = await Board.updateOne(
-      { _id: board._id, 'collaborators.email': req.params.email },
-      { $set: { 'collaborators.$.role': role } }
-    );
-
-    if (result.matchedCount === 0) {
-      return res.status(404).json({ message: 'Collaborator not found' });
-    }
-
-    return res.json({ ok: true });
-  } catch (e) {
-    return res.status(500).json({ message: 'Failed to update collaborator role', error: e.message });
-  }
-});
-
-// Remove collaborator (owner only)
-router.delete('/:id/collaborators/:email', async (req, res) => {
-  try {
-    const board = await Board.findOne({ _id: req.params.id, ownerId: req.user.uid });
-    if (!board) return res.status(404).json({ message: 'Board not found' });
-
-    const result = await Board.updateOne(
-      { _id: board._id },
-      { $pull: { collaborators: { email: req.params.email } } }
-    );
-
-    if (result.matchedCount === 0) {
-      return res.status(404).json({ message: 'Board not found' });
-    }
-
-    return res.json({ ok: true });
-  } catch (e) {
-    return res.status(500).json({ message: 'Failed to remove collaborator', error: e.message });
-  }
-});
-
-// Update public access settings (owner only)
-router.put('/:id/public-access', async (req, res) => {
-  try {
-    const { enabled, role } = req.body || {};
-    if (typeof enabled !== 'boolean') {
-      return res.status(400).json({ message: 'enabled must be a boolean' });
-    }
-    if (enabled && !['viewer', 'editor'].includes(role)) {
-      return res.status(400).json({ message: 'Invalid role for public access' });
-    }
-
-    const board = await Board.findOne({ _id: req.params.id, ownerId: req.user.uid });
-    if (!board) return res.status(404).json({ message: 'Board not found' });
-
-    const update = { 'publicAccess.enabled': enabled };
-    if (enabled) {
-      update['publicAccess.role'] = role || 'viewer';
-    } else {
-      update['publicAccess.role'] = 'viewer';
-      update['publicAccess.linkId'] = null;
-    }
-
-    await Board.updateOne({ _id: board._id }, { $set: update });
-    return res.json({ ok: true });
-  } catch (e) {
-    return res.status(500).json({ message: 'Failed to update public access', error: e.message });
-  }
-});
 
 module.exports = router;
