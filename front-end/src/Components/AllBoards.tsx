@@ -217,13 +217,13 @@ export default function AllBoards() {
             </h1>
             <p className="mx-auto mt-4 max-w-2xl text-base leading-7 text-slate-600 md:text-lg">
               A clean, collaborative canvas for sketches, flowcharts, and ideas.
-              Create boards, invite teammates, and bring plans to life—fast.
+              Create boards, invite teammates, and bring plans to lifefast.
             </p>
             <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
               <Login />
             </div>
             <p className="mt-3 text-xs text-slate-500">
-              No credit card needed • Cancel anytime
+              {/* No credit card needed • Cancel anytime */}
             </p>
           </section>
         </main>

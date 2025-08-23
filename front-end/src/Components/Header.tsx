@@ -43,15 +43,14 @@ const Header = () => {
           <div className="grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-br from-indigo-500 to-purple-500 text-white shadow-sm">
             <PencilRuler className="h-5 w-5" />
           </div>
-          <span className="text-lg font-semibold tracking-tight">Diagramr</span>
+          <span className="text-lg font-semibold tracking-tight">Mossara</span>
         </Link>
         <nav className="hidden items-center gap-6 md:flex">
-          <a
-            href="#features"
+          <Link to="/boards"
             className="text-sm text-slate-600 hover:text-slate-900"
           >
-            Features
-          </a>
+            Boards
+          </Link>
           <a
             href="https://progskill.com"
             target="_blank"
@@ -59,12 +58,11 @@ const Header = () => {
           >
             Learn Coding
           </a>
-          <a
-            href="#faq"
+          <Link to="/"
             className="text-sm text-slate-600 hover:text-slate-900"
           >
             FAQ
-          </a>
+          </Link>
         </nav>
         {/* <Login/> */}
         <div className="flex items-center gap-3">

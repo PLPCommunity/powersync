@@ -137,7 +137,7 @@ export function HomePage() {
               <PencilRuler className="h-4 w-4" />
             </div>
             <span>
-              © {new Date().getFullYear()} Diagramr. All rights reserved.
+              © {new Date().getFullYear()} Mosarra. All rights reserved.
             </span>
           </div>
           <div className="flex items-center gap-5">
