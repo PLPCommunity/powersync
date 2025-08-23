@@ -86,14 +86,11 @@ function rectHandlesRotated(s: RectLike): HandlePoint[] {
 }
 
 /* -------------------- Component -------------------- */
-export function BoardCanvas({ isPublic = false }: { isPublic?: boolean }) {
+export function BoardCanvas() {
   
-  const { id: boardId, linkId } = useParams();
+  const { id: boardId } = useParams();
   const navigate = useNavigate();
   
-  // For public boards, we need to fetch by linkId, but the actual boardId will be determined after fetching
-  const actualBoardId = isPublic ? null : boardId;
-
   const [boardName, setBoardName] = useState("Untitled document");
   const [tool, setTool] = useState<Tool>("select");
   const [shapes, setShapes] = useState<Shape[]>([]);
@@ -106,6 +103,7 @@ export function BoardCanvas({ isPublic = false }: { isPublic?: boolean }) {
   const [inviteRole, setInviteRole] = useState<CollaboratorRole>("viewer");
   const [canEdit, setCanEdit] = useState(false);
   const [isOwner, setIsOwner] = useState(false);
+  const [isPublic, setIsPublic] = useState(false); // Will be set based on board data
 
   // Track last server-synced state to avoid unnecessary PUTs and to detect "dirty"
   const serverNameRef = useRef<string>("Untitled document");
@@ -167,39 +165,26 @@ export function BoardCanvas({ isPublic = false }: { isPublic?: boolean }) {
 
     loadingRef.current = true;
     try {
-      let endpoint: string;
-      if (isPublic) {
-        endpoint = `/api/boards/public/${linkId}`;
-        console.log('[Public Board] Fetching from:', endpoint);
-      } else {
-        if (!actualBoardId) return;
-        endpoint = `/api/boards/${actualBoardId}`;
-      }
+      const endpoint = `/api/boards/${boardId}`;
+      console.log('[Board] Fetching from:', endpoint);
       
       const res = await fetch(`${API_BASE}${endpoint}`, {
         method: "GET",
-        credentials: isPublic ? "omit" : "include",
+        credentials: "include", // Always include credentials, the backend will handle public access
       });
       
-      if (res.status === 401 && !isPublic) {
+      if (res.status === 401) {
         navigate("/boards");
         return;
       }
       
       if (!res.ok) {
-        if (isPublic) {
-          console.error('[Public Board] Failed to fetch:', res.status, res.statusText);
-          // For public boards, show a user-friendly error
-          setBoardName("Board not found or not public");
-          setShapes([]);
-          setLoaded(true);
-          return;
-        }
+        console.error('[Board] Failed to fetch:', res.status, res.statusText);
         return;
       }
       
       const data = await res.json();
-      console.log('[Public Board] Received data:', data);
+      console.log('[Board] Received data:', data);
 
       // Update local state with server data
       const nextName = data?.name || "Untitled document";
@@ -215,11 +200,15 @@ export function BoardCanvas({ isPublic = false }: { isPublic?: boolean }) {
       setCollaborators(nextCollabs);
       setPublicAccess(nextPublicAccess);
       
-      if (isPublic) {
+      // Check if this is a public board
+      const isPublicBoard = data?.isPublic || false;
+      setIsPublic(isPublicBoard);
+      
+      if (isPublicBoard) {
         // Public board: permissions based on publicAccess settings
         setIsOwner(false);
         setCanEdit(nextPublicAccess.role === 'editor');
-        console.log('[Public Board] Set permissions:', { canEdit: nextPublicAccess.role === 'editor', role: nextPublicAccess.role });
+        console.log('[Board] Public board - permissions:', { canEdit: nextPublicAccess.role === 'editor', role: nextPublicAccess.role });
       } else {
         // Private board: normal permission logic
         const u = auth.currentUser; const email = u?.email?.toLowerCase();
@@ -231,13 +220,7 @@ export function BoardCanvas({ isPublic = false }: { isPublic?: boolean }) {
       
       setLoaded(true); // <-- allow autosaves after first load
     } catch (error) {
-      console.error('[Public Board] Error fetching board:', error);
-      if (isPublic) {
-        // For public boards, show a user-friendly error
-        setBoardName("Error loading board");
-        setShapes([]);
-        setLoaded(true);
-      }
+      console.error('[Board] Error fetching board:', error);
     } finally {
       loadingRef.current = false;
     }
@@ -250,28 +233,36 @@ export function BoardCanvas({ isPublic = false }: { isPublic?: boolean }) {
 
     let unsub: (() => void) | undefined;
     
-    if (isPublic) {
-      // Public board: no auth required, just fetch
-      fetchBoard(true);
-    } else {
-      // Private board: require auth
-      unsub = auth.onAuthStateChanged(async (u: any) => {
-        if (!mounted) return;
-        if (!u) {
+    // Always try to fetch the board first to determine if it's public
+    fetchBoard(true);
+    
+    // Set up auth listener for private boards
+    unsub = auth.onAuthStateChanged(async (u: any) => {
+      if (!mounted) return;
+      
+      if (!u) {
+        // No user - check if board is public, if not redirect
+        if (!isPublic) {
           navigate("/boards");
-          return;
         }
-        const ok = await ensureSession();
-        if (!ok) { navigate("/boards"); return; }
-        await fetchBoard(true); // force initial fetch & prevent autosave from wiping
-        try {
-          await fetch(`${API_BASE}/api/boards/${actualBoardId}/accept`, { method: "POST", credentials: "include" });
-        } catch {}
-        if (actualBoardId) {
-          socketRef.current?.emit("join-board", { boardId: actualBoardId, userId: u?.uid, userName: u?.displayName });
-        }
-      });
-    }
+        return;
+      }
+      
+      // User is authenticated - ensure session and join board
+      const ok = await ensureSession();
+      if (!ok) { 
+        navigate("/boards"); 
+        return; 
+      }
+      
+      try {
+        await fetch(`${API_BASE}/api/boards/${boardId}/accept`, { method: "POST", credentials: "include" });
+      } catch {}
+      
+      if (boardId) {
+        socketRef.current?.emit("join-board", { boardId: boardId, userId: u?.uid, userName: u?.displayName });
+      }
+    });
 
     // refresh when focus returns (if not dirty) + background poll
     const onFocus = () => fetchBoard(false);
@@ -286,7 +277,7 @@ export function BoardCanvas({ isPublic = false }: { isPublic?: boolean }) {
       window.removeEventListener("focus", onFocus);
       window.clearInterval(id);
     };
-  }, [boardId, navigate]);
+  }, [boardId, navigate, isPublic]);
 
   /* -------------------- Socket shape events (peer updates) -------------------- */
   useEffect(() => {
@@ -312,13 +303,13 @@ export function BoardCanvas({ isPublic = false }: { isPublic?: boolean }) {
 
   /* -------------------- Autosave (shapes) -------------------- */
   useEffect(() => {
-    if (!loaded || !actualBoardId || isPublic) return; // don't save before first fetch, or if no boardId, or if public
+    if (!loaded || !boardId || isPublic) return; // don't save before first fetch, or if no boardId, or if public
     const current = JSON.stringify(shapes);
     if (current === lastSavedShapesRef.current) return; // unchanged
 
     const t = setTimeout(async () => {
       try {
-        const r = await fetch(`${API_BASE}/api/boards/${actualBoardId}/shapes`, {
+        const r = await fetch(`${API_BASE}/api/boards/${boardId}/shapes`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           credentials: "include",
@@ -331,17 +322,17 @@ export function BoardCanvas({ isPublic = false }: { isPublic?: boolean }) {
       } catch {/* ignore */}
     }, 200); // Reduced from 500ms to 200ms for faster sync
     return () => clearTimeout(t);
-  }, [shapes, actualBoardId, loaded, navigate, isPublic]);
+  }, [shapes, boardId, loaded, navigate, isPublic]);
 
   /* -------------------- Autosave (name) -------------------- */
   useEffect(() => {
-    if (!loaded || !actualBoardId || isPublic) return;
+    if (!loaded || !boardId || isPublic) return;
     const trimmed = boardName.trim();
     if (trimmed === serverNameRef.current.trim()) return;
 
     const t = setTimeout(async () => {
       try {
-        const r = await fetch(`${API_BASE}/api/boards/${actualBoardId}`, {
+        const r = await fetch(`${API_BASE}/api/boards/${boardId}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           credentials: "include",
@@ -354,7 +345,7 @@ export function BoardCanvas({ isPublic = false }: { isPublic?: boolean }) {
       } catch {/* ignore */}
     }, 300); // Reduced from 500ms to 300ms for faster sync
     return () => clearTimeout(t);
-  }, [boardName, actualBoardId, loaded, navigate, isPublic]);
+  }, [boardName, boardId, loaded, navigate, isPublic]);
 
   /* -------------------- Render loop -------------------- */
   const requestNextFrame = () => {
@@ -608,8 +599,8 @@ export function BoardCanvas({ isPublic = false }: { isPublic?: boolean }) {
     };
     setShapes((prev) => [...prev, base]);
     setSelectedId(id);
-    if (actualBoardId && !isPublic) {
-      socketRef.current?.emit("shape-create", { boardId: actualBoardId, shape: base, user: { uid: auth.currentUser?.uid } });
+    if (boardId && !isPublic) {
+      socketRef.current?.emit("shape-create", { boardId: boardId, shape: base, user: { uid: auth.currentUser?.uid } });
     }
     setTextEditor({ visible: true, x: p.x, y: p.y, value: "", shapeId: id });
   }
@@ -680,8 +671,8 @@ export function BoardCanvas({ isPublic = false }: { isPublic?: boolean }) {
     if (draftShapeRef.current && isFreehand(draftShapeRef.current)) {
       const d = draftShapeRef.current as Freehand; d.bbox = computeBBox(d.points);
       setShapes((prev) => [...prev, d]); 
-      if (actualBoardId && !isPublic) {
-        socketRef.current?.emit("shape-create",{boardId:actualBoardId,shape:d,user:{uid:auth.currentUser?.uid}});
+      if (boardId && !isPublic) {
+        socketRef.current?.emit("shape-create",{boardId:boardId,shape:d,user:{uid:auth.currentUser?.uid}});
       }
       draftShapeRef.current=null;
     }
@@ -689,8 +680,8 @@ export function BoardCanvas({ isPublic = false }: { isPublic?: boolean }) {
       const d = draftShapeRef.current as any; let toAdd: Shape = d as Shape;
       if (isRectLike(d)) { const norm = normalizeRect({ x:d.x, y:d.y, w:d.w, h:d.h }); toAdd = { ...(d as RectLike), ...norm } as RectLike; }
       setShapes((prev) => [...prev, toAdd]); 
-      if (actualBoardId && !isPublic) {
-        socketRef.current?.emit("shape-create",{boardId:actualBoardId,shape:toAdd,user:{uid:auth.currentUser?.uid}});
+      if (boardId && !isPublic) {
+        socketRef.current?.emit("shape-create",{boardId:boardId,shape:toAdd,user:{uid:auth.currentUser?.uid}});
       }
       draftShapeRef.current=null;
     }
@@ -700,8 +691,8 @@ export function BoardCanvas({ isPublic = false }: { isPublic?: boolean }) {
       if (orig) {
         setShapes((prev) => prev.map((s) => (s.id === finalShape.id ? finalShape : s)));
         const diff = diffShape(orig, finalShape);
-        if (Object.keys(diff).length > 0 && actualBoardId && !isPublic) {
-          socketRef.current?.emit("shape-update", { boardId: actualBoardId, shapeId: finalShape.id, props: diff, user:{uid:auth.currentUser?.uid} });
+        if (Object.keys(diff).length > 0 && boardId && !isPublic) {
+          socketRef.current?.emit("shape-update", { boardId: boardId, shapeId: finalShape.id, props: diff, user:{uid:auth.currentUser?.uid} });
         }
       }
     }
@@ -751,8 +742,8 @@ export function BoardCanvas({ isPublic = false }: { isPublic?: boolean }) {
     const pasted=cloneForPaste(clip); 
     setShapes(prev=>[...prev,pasted]); 
     setSelectedId(pasted.id); 
-    if (actualBoardId && !isPublic) {
-      socketRef.current?.emit("shape-create",{boardId:actualBoardId,shape:pasted,user:{uid:auth.currentUser?.uid}});
+    if (boardId && !isPublic) {
+      socketRef.current?.emit("shape-create",{boardId:boardId,shape:pasted,user:{uid:auth.currentUser?.uid}});
     }
   };
   const deleteSelected=()=>{ 
@@ -761,8 +752,8 @@ export function BoardCanvas({ isPublic = false }: { isPublic?: boolean }) {
     draggedShapeRef.current=null; 
     setShapes(prev=>prev.filter(s=>s.id!==id)); 
     setSelectedId(null); 
-    if (actualBoardId && !isPublic) {
-      socketRef.current?.emit("shape-delete",{boardId:actualBoardId,shapeId:id,user:{uid:auth.currentUser?.uid}});
+    if (boardId && !isPublic) {
+      socketRef.current?.emit("shape-delete",{boardId:boardId,shapeId:id,user:{uid:auth.currentUser?.uid}});
     }
   };
 
@@ -872,8 +863,8 @@ export function BoardCanvas({ isPublic = false }: { isPublic?: boolean }) {
           const sel=shapes.find(s=>s.id===selectedId); if (!sel) return null;
           const updateSel=(props:Partial<Shape>)=>{
             setShapes(prev=>prev.map(s=>s.id===selectedId? ({...s, ...props} as Shape) : s));
-            if (actualBoardId && !isPublic) {
-              socketRef.current?.emit("shape-update",{boardId:actualBoardId,shapeId:selectedId,props,user:{uid:auth.currentUser?.uid}});
+            if (boardId && !isPublic) {
+              socketRef.current?.emit("shape-update",{boardId:boardId,shapeId:selectedId,props,user:{uid:auth.currentUser?.uid}});
             }
           };
           return (
@@ -938,7 +929,7 @@ export function BoardCanvas({ isPublic = false }: { isPublic?: boolean }) {
                         checked={publicAccess.enabled}
                         onChange={async (e) => {
                           try {
-                            const r = await fetch(`${API_BASE}/api/boards/${actualBoardId}/public-access`, {
+                            const r = await fetch(`${API_BASE}/api/boards/${boardId}/public-access`, {
                               method: "PUT",
                               headers: { "Content-Type": "application/json" },
                               credentials: "include",
@@ -964,7 +955,7 @@ export function BoardCanvas({ isPublic = false }: { isPublic?: boolean }) {
                           value={publicAccess.role} 
                           onChange={async (e) => {
                             try {
-                              const r = await fetch(`${API_BASE}/api/boards/${actualBoardId}/public-access`, {
+                              const r = await fetch(`${API_BASE}/api/boards/${boardId}/public-access`, {
                                 method: "PUT",
                                 headers: { "Content-Type": "application/json" },
                                 credentials: "include",
@@ -985,22 +976,24 @@ export function BoardCanvas({ isPublic = false }: { isPublic?: boolean }) {
                         <span className="text-sm text-slate-600">can access via link</span>
                       </div>
                       
-                      {publicAccess.linkId && (
-                        <div className="flex items-center gap-2 p-3 bg-white border border-slate-200 rounded">
-                          <input
-                            value={`${window.location.origin}/board/public/${publicAccess.linkId}`}
-                            readOnly
-                            className="flex-1 text-sm border-none outline-none bg-transparent"
-                          />
-                          <button
-                            onClick={() => navigator.clipboard.writeText(`${window.location.origin}/board/public/${publicAccess.linkId}`)}
-                            className="px-3 py-1.5 text-xs bg-slate-600 text-white rounded hover:bg-slate-700"
-                            style={{ cursor: "pointer" }}
-                          >
-                            Copy
-                          </button>
-                        </div>
-                      )}
+                      <div className="flex items-center gap-2 p-3 bg-white border border-slate-200 rounded">
+                        <input
+                          value={`${window.location.origin}/board/${boardId}`}
+                          readOnly
+                          className="flex-1 text-sm border-none outline-none bg-transparent"
+                        />
+                        <button
+                          onClick={() => navigator.clipboard.writeText(`${window.location.origin}/board/${boardId}`)}
+                          className="px-3 py-1.5 text-xs bg-slate-600 text-white rounded hover:bg-slate-700"
+                          style={{ cursor: "pointer" }}
+                        >
+                          Copy
+                        </button>
+                      </div>
+                      
+                      <div className="text-xs text-slate-500 bg-blue-50 p-2 rounded">
+                        💡 Anyone with this link can now view this board. The link will work for both authenticated and anonymous users.
+                      </div>
                     </div>
                   )}
                 </div>
@@ -1023,7 +1016,7 @@ export function BoardCanvas({ isPublic = false }: { isPublic?: boolean }) {
                       onClick={async ()=>{
                         const email = inviteEmail.trim(); if (!email) return;
                         try {
-                          const r = await fetch(`${API_BASE}/api/boards/${actualBoardId}/invite`, {
+                          const r = await fetch(`${API_BASE}/api/boards/${boardId}/invite`, {
                             method: "POST",
                             headers: { "Content-Type": "application/json" },
                             credentials: "include",
@@ -1062,7 +1055,7 @@ export function BoardCanvas({ isPublic = false }: { isPublic?: boolean }) {
                             value={c.role}
                             onChange={async (e) => {
                               try {
-                                const r = await fetch(`${API_BASE}/api/boards/${actualBoardId}/collaborators/${encodeURIComponent(c.email)}/role`, {
+                                const r = await fetch(`${API_BASE}/api/boards/${boardId}/collaborators/${encodeURIComponent(c.email)}/role`, {
                                   method: "PUT",
                                   headers: { "Content-Type": "application/json" },
                                   credentials: "include",
@@ -1083,7 +1076,7 @@ export function BoardCanvas({ isPublic = false }: { isPublic?: boolean }) {
                               onClick={async () => {
                                 if (!confirm(`Remove ${c.email} from this board?`)) return;
                                 try {
-                                    const r = await fetch(`${API_BASE}/api/boards/${actualBoardId}/collaborators/${encodeURIComponent(c.email)}`, {
+                                    const r = await fetch(`${API_BASE}/api/boards/${boardId}/collaborators/${encodeURIComponent(c.email)}`, {
                                     method: "DELETE",
                                     credentials: "include"
                                   });
@@ -1132,8 +1125,8 @@ export function BoardCanvas({ isPublic = false }: { isPublic?: boolean }) {
     if (!value.trim()) {
       const next = shapes.filter((s) => s.id !== shape.id);
       setShapes(next);
-      if (actualBoardId && !isPublic) {
-        socketRef.current?.emit("shape-delete", { boardId: actualBoardId, shapeId: shape.id });
+      if (boardId && !isPublic) {
+        socketRef.current?.emit("shape-delete", { boardId: boardId, shapeId: shape.id });
       }
       setTextEditor({ visible:false, x:0, y:0, value:"", shapeId:null });
       return;
@@ -1141,8 +1134,8 @@ export function BoardCanvas({ isPublic = false }: { isPublic?: boolean }) {
     const dim = measureText(value, shape.fontSize, shape.fontFamily);
     const next: TextShape = { ...shape, text:value, w:dim.width, h:dim.height };
     setShapes((prev) => prev.map((s) => (s.id === shape.id ? next : s)));
-            if (actualBoardId && !isPublic) {
-          socketRef.current?.emit("shape-update", { boardId: actualBoardId, shapeId: shape.id, props: { text: next.text, w: next.w, h: next.h }, user:{uid:auth.currentUser?.uid} });
+            if (boardId && !isPublic) {
+          socketRef.current?.emit("shape-update", { boardId: boardId, shapeId: shape.id, props: { text: next.text, w: next.w, h: next.h }, user:{uid:auth.currentUser?.uid} });
         }
     setTextEditor({ visible:false, x:0, y:0, value:"", shapeId:null });
   }

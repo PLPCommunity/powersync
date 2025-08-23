@@ -46,7 +46,7 @@ app.get('/api/ping', (req, res) => res.json({ msg: 'pong' }));
 app.get('/api/test/public-boards', async (req, res) => {
   try {
     const boards = await Board.find({ 'publicAccess.enabled': true })
-      .select('name publicAccess.linkId publicAccess.role')
+      .select('name _id publicAccess.role')
       .lean();
     
     res.json({
@@ -54,8 +54,9 @@ app.get('/api/test/public-boards', async (req, res) => {
       count: boards.length,
       boards: boards.map(b => ({
         name: b.name,
-        linkId: b.publicAccess?.linkId,
-        role: b.publicAccess?.role
+        boardId: b._id,
+        role: b.publicAccess?.role,
+        publicUrl: `${req.protocol}://${req.get('host')}/board/${b._id}`
       }))
     });
   } catch (error) {

@@ -52,7 +52,6 @@ const BoardSchema = new mongoose.Schema(
     publicAccess: {
       enabled: { type: Boolean, default: false },
       role: { type: String, enum: ['viewer', 'editor'], default: 'viewer' },
-      linkId: { type: String, unique: true, sparse: true, index: true },
     },
   },
   { timestamps: true }
@@ -60,9 +59,7 @@ const BoardSchema = new mongoose.Schema(
 
 // Generate unique public link ID
 BoardSchema.pre('save', function(next) {
-  if (this.publicAccess?.enabled && !this.publicAccess.linkId) {
-    this.publicAccess.linkId = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
-  }
+  // Remove automatic linkId generation - public access will use normal board ID
   next();
 });
 

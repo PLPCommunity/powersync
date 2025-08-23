@@ -35,7 +35,6 @@ export default function App() {
 
       <Route element={<LayoutNoHeader />}>
         <Route path="/board/:id" element={<BoardCanvas />} />
-        <Route path="/board/public/:linkId" element={<BoardCanvas isPublic />} />
       </Route>
 
       <Route path="*" element={<Navigate to="/" replace />} />

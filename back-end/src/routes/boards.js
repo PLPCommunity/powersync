@@ -5,8 +5,15 @@ const { verifyFirebase } = require('../middleware/auth');
 
 const router = express.Router();
 
-// every route below requires auth
-router.use(verifyFirebase);
+// Apply auth middleware to all routes EXCEPT the main board route (which handles public access)
+router.use((req, res, next) => {
+  // Skip auth for GET /:id (main board route) - it handles auth internally
+  if (req.method === 'GET' && req.path.match(/^\/[^\/]+$/)) {
+    return next();
+  }
+  // Apply auth to all other routes
+  return verifyFirebase(req, res, next);
+});
 
 // Create
 router.post('/', async (req, res) => {
@@ -46,57 +53,54 @@ router.get('/', async (req, res) => {
   }
 });
 
-// Get one (owner or collaborator) - optimized with projection
+// Get one (owner, collaborator, or public access)
 router.get('/:id', async (req, res) => {
   try {
-    const board = await Board.findOne({
-      _id: req.params.id,
-      $or: [
-        { ownerId: req.user.uid },
-        { 'collaborators.uid': req.user.uid },
-        { 'collaborators.email': req.user.email?.toLowerCase() },
-      ],
-    })
-    .select('name description ownerId ownerName ownerEmail collaborators publicAccess shapes updatedAt createdAt')
-    .lean();
-    if (!board) return res.status(404).json({ message: 'Board not found' });
+    const boardId = req.params.id;
+    
+    // First, try to find the board
+    const board = await Board.findById(boardId).lean();
+    if (!board) {
+      return res.status(404).json({ message: 'Board not found' });
+    }
+    
+    // Check if board has public access enabled
+    if (board.publicAccess?.enabled) {
+      // Public board - return with limited data (no owner info, no collaborators)
+      const publicBoard = {
+        _id: board._id,
+        name: board.name,
+        description: board.description,
+        publicAccess: board.publicAccess,
+        shapes: board.shapes,
+        updatedAt: board.updatedAt,
+        createdAt: board.createdAt,
+        isPublic: true
+      };
+      return res.json(publicBoard);
+    }
+    
+    // Private board - require authentication
+    if (!req.user) {
+      return res.status(401).json({ message: 'Authentication required' });
+    }
+    
+    // Check if user has access (owner or collaborator)
+    const hasAccess = 
+      board.ownerId === req.user.uid ||
+      board.collaborators?.some(c => 
+        (c.uid && c.uid === req.user.uid) || 
+        (c.email && c.email.toLowerCase() === req.user.email?.toLowerCase())
+      );
+    
+    if (!hasAccess) {
+      return res.status(403).json({ message: 'Access denied' });
+    }
+    
+    // Return full board data for authenticated users
     return res.json(board);
   } catch (e) {
     return res.status(500).json({ message: 'Failed to fetch board', error: e.message });
-  }
-});
-
-// Get one by public link (no auth required)
-router.get('/public/:linkId', async (req, res) => {
-  try {
-    const { linkId } = req.params;
-    console.log(`[Public Board] Attempting to fetch board with linkId: ${linkId}`);
-    
-    const board = await Board.findOne({
-      'publicAccess.enabled': true,
-      'publicAccess.linkId': linkId,
-    })
-    .select('name description publicAccess shapes updatedAt createdAt')
-    .lean();
-    
-    if (!board) {
-      console.log(`[Public Board] No board found for linkId: ${linkId}`);
-      return res.status(404).json({ 
-        message: 'Public board not found', 
-        error: 'The board either does not exist or is not publicly accessible',
-        linkId: linkId
-      });
-    }
-    
-    console.log(`[Public Board] Successfully found board: ${board.name} (ID: ${board._id})`);
-    return res.json(board);
-  } catch (e) {
-    console.error(`[Public Board] Error fetching public board:`, e);
-    return res.status(500).json({ 
-      message: 'Failed to fetch public board', 
-      error: e.message,
-      linkId: req.params.linkId
-    });
   }
 });
 
@@ -309,14 +313,8 @@ router.put('/:id/public-access', async (req, res) => {
     const update = { 'publicAccess.enabled': enabled };
     if (enabled) {
       update['publicAccess.role'] = role || 'viewer';
-      // Generate link ID if not exists
-      const boardDoc = await Board.findById(req.params.id);
-      if (!boardDoc.publicAccess.linkId) {
-        update['publicAccess.linkId'] = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
-      }
     } else {
       update['publicAccess.role'] = 'viewer';
-      update['publicAccess.linkId'] = null;
     }
 
     await Board.updateOne({ _id: req.params.id }, { $set: update });
