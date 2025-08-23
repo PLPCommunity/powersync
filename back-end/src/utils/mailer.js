@@ -31,8 +31,8 @@ function welcomeEmailHtml({ userName, userEmail }) {
         <table role="presentation" cellpadding="0" cellspacing="0" width="620" style="width:620px;max-width:100%;background:#ffffff;border-radius:16px;box-shadow:0 10px 30px rgba(44,62,80,.08);overflow:hidden;">
           <!-- Header / gradient -->
           <tr>
-            <td style="
-              background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            <td"
+              background: linear-gradient(135deg, #6a11cb 0%, #2575fc 100%);
               padding: 28px 24px; text-align:center; color:#fff;">
               <div style="font:700 22px/1.25 Inter,Arial,sans-serif; letter-spacing:.2px;">
                 🎉 Welcome to <strong>${APP_NAME}</strong>!
@@ -67,8 +67,8 @@ function welcomeEmailHtml({ userName, userEmail }) {
 
               <!-- CTA -->
               <div style="text-align:center; margin:18px 0 6px;">
-                <a href="${safeOrigin('')}/boards"
-                   style="display:inline-block; background:#10b981; color:#ffffff; text-decoration:none;
+                <a href="localhost:3000/boards"
+                   style="display:inline-block; background:#4f46e5; color:#ffffff; text-decoration:none;
                           padding:12px 18px; border-radius:10px; font-weight:700; font-size:14px;">
                   Start Creating
                 </a>
@@ -76,7 +76,7 @@ function welcomeEmailHtml({ userName, userEmail }) {
 
               <!-- Secondary info -->
               <div style="text-align:center; margin:8px 0 18px;">
-                <a href="${safeOrigin('')}/boards" style="font-size:12px; color:#059669; text-decoration:none;">Browse your boards</a>
+                <a href="localhost:3000/boards" style="font-size:12px; color:#059669; text-decoration:none;">Browse your boards</a>
               </div>
 
               <!-- Quick start tips -->
