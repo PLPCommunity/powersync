@@ -92,11 +92,12 @@ export function BoardCanvas() {
   const navigate = useNavigate();
   
   const [boardName, setBoardName] = useState("Untitled document");
-  const [tool, setTool] = useState<Tool>("select");
+  const [tool, setTool] = useState<Tool | null>(null);
   const [shapes, setShapes] = useState<Shape[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false); // <-- gate autosaves until data is fetched
   const [loading, setLoading] = useState(true); // <-- track initial loading state
+  const [showLoadingOverlay, setShowLoadingOverlay] = useState(true); // <-- control loading overlay separately
   const [collaborators, setCollaborators] = useState<Collaborator[]>([]);
   const [publicAccess, setPublicAccess] = useState<PublicAccess>({ enabled: false, role: "viewer" });
   const [shareOpen, setShareOpen] = useState(false);
@@ -105,6 +106,7 @@ export function BoardCanvas() {
   const [canEdit, setCanEdit] = useState(false);
   const [isOwner, setIsOwner] = useState(false);
   const [isPublic, setIsPublic] = useState(false); // Will be set based on board data
+  const [userRole, setUserRole] = useState<'owner' | 'editor' | 'viewer'>('viewer');
 
   // Track last server-synced state to avoid unnecessary PUTs and to detect "dirty"
   const serverNameRef = useRef<string>("Untitled document");
@@ -169,29 +171,35 @@ export function BoardCanvas() {
       const endpoint = `/api/boards/${boardId}`;
       console.log('[Board] Fetching from:', endpoint);
       
-      // First try to ensure session if user is authenticated
+      // Try to ensure session if user is authenticated (but don't block on it)
       const u = auth.currentUser;
       if (u) {
-        await ensureSession();
+        try {
+          await ensureSession();
+        } catch (error) {
+          console.log('[Board] Session setup failed, continuing anyway:', error);
+        }
       }
       
       const res = await fetch(`${API_BASE}${endpoint}`, {
         method: "GET",
-        credentials: "include", // Always include credentials, the backend will handle public access
+        credentials: "include",
       });
       
-      if (res.status === 401) {
-        // Only redirect if user is authenticated but still getting 401
-        // This means they don't have access to this board
-        if (u) {
-          console.log('[Board] User authenticated but unauthorized, redirecting to boards');
+      if (!res.ok) {
+        // If 404, board doesn't exist - redirect to boards
+        if (res.status === 404) {
+          console.log('[Board] Board not found, redirecting to boards');
           navigate("/boards");
           return;
         }
-        // If no user, this might be a public board, continue to check
-      }
-      
-      if (!res.ok) {
+        // If 403, user doesn't have access to private board - redirect to boards
+        if (res.status === 403) {
+          console.log('[Board] Access denied to private board, redirecting to boards');
+          navigate("/boards");
+          return;
+        }
+        // For other errors, just show error and don't redirect
         console.error('[Board] Failed to fetch:', res.status, res.statusText);
         setLoading(false);
         return;
@@ -214,29 +222,35 @@ export function BoardCanvas() {
       setCollaborators(nextCollabs);
       setPublicAccess(nextPublicAccess);
       
+      // Set user role and permissions based on server response
+      const serverUserRole = data?.userRole || 'viewer';
+      setUserRole(serverUserRole);
+      
       // Check if this is a public board
       const isPublicBoard = data?.isPublic || false;
       setIsPublic(isPublicBoard);
       
-      if (isPublicBoard) {
-        // Public board: permissions based on publicAccess settings
-        setIsOwner(false);
-        setCanEdit(nextPublicAccess.role === 'editor');
-        console.log('[Board] Public board - permissions:', { canEdit: nextPublicAccess.role === 'editor', role: nextPublicAccess.role });
-      } else {
-        // Private board: normal permission logic
-        const u = auth.currentUser; const email = u?.email?.toLowerCase();
-        const amOwner = data?.ownerId && u?.uid && data.ownerId === u.uid;
-        const coll = nextCollabs.find(c=> (c.uid && c.uid===u?.uid) || (c.email && c.email.toLowerCase()===email));
-        setIsOwner(!!amOwner);
-        setCanEdit(!!amOwner || (coll?.role === 'editor'));
-      }
+      // Set permissions based on user role
+      const amOwner = serverUserRole === 'owner';
+      setIsOwner(amOwner);
+      setCanEdit(amOwner || serverUserRole === 'editor');
+      
+      console.log('[Board] User permissions:', { 
+        userRole: serverUserRole, 
+        isOwner: amOwner, 
+        canEdit: amOwner || serverUserRole === 'editor',
+        isPublic: isPublicBoard
+      });
       
       setLoaded(true); // <-- allow autosaves after first load
       setLoading(false); // <-- mark initial loading as complete
+      
+      // Hide loading overlay quickly for better UX
+      setTimeout(() => setShowLoadingOverlay(false), 100);
     } catch (error) {
       console.error('[Board] Error fetching board:', error);
       setLoading(false);
+      setShowLoadingOverlay(false);
     } finally {
       loadingRef.current = false;
     }
@@ -251,56 +265,45 @@ export function BoardCanvas() {
 
     let unsub: (() => void) | undefined;
     
-    // Always try to fetch the board first to determine if it's public
+    // Always try to fetch the board first
     fetchBoard(true);
     
-    // Set up auth listener for private boards
+    // Start rendering immediately for better perceived performance
+    requestNextFrame();
+    
+    // Set up auth listener 
     unsub = auth.onAuthStateChanged(async (u: any) => {
       if (!mounted) return;
       
       console.log('[Board] Auth state changed:', u ? 'User authenticated' : 'No user');
       
-      if (!u) {
-        // No user - wait for board to load first, then check if it's public
-        // Don't redirect immediately, give the board fetch a chance to succeed
-        console.log('[Board] No user, waiting for board to load before deciding on redirect');
-        return;
-      }
-      
-      // User is authenticated - ensure session and join board
-      console.log('[Board] Ensuring session for user:', u.email);
-      const ok = await ensureSession();
-      if (!ok) { 
-        console.log('[Board] Failed to ensure session, redirecting to boards');
-        navigate("/boards"); 
-        return; 
-      }
-      
-      console.log('[Board] Session ensured successfully, joining board');
-      
-      try {
-        await fetch(`${API_BASE}/api/boards/${boardId}/accept`, { method: "POST", credentials: "include" });
-      } catch (error) {
-        console.log('[Board] Failed to accept board invitation:', error);
-      }
-      
-      if (boardId) {
-        socketRef.current?.emit("join-board", { boardId: boardId, userId: u?.uid, userName: u?.displayName });
+      if (u) {
+        // User is authenticated - try to accept any invitation
+        console.log('[Board] User authenticated, trying to accept invitation');
+        try {
+          await fetch(`${API_BASE}/api/boards/${boardId}/accept`, { 
+            method: "POST", 
+            credentials: "include" 
+          });
+        } catch (error) {
+          console.log('[Board] Failed to accept board invitation:', error);
+        }
+        
+        // Join the board socket room
+        if (boardId) {
+          socketRef.current?.emit("join-board", { 
+            boardId: boardId, 
+            userId: u.uid, 
+            userName: u.displayName 
+          });
+        }
+        
+        // Refresh board data now that user is authenticated
+        if (loaded) {
+          fetchBoard(true);
+        }
       }
     });
-
-    // Check for unauthorized access after board loads
-    const checkAccess = () => {
-      if (mounted && !loading && !isPublic && !auth.currentUser) {
-        console.log('[Board] Board loaded but no user and not public, redirecting to boards');
-        navigate("/boards");
-      }
-    };
-
-    // Check access when loading completes
-    if (!loading) {
-      checkAccess();
-    }
     
     // refresh when focus returns (if not dirty) + background poll
     const onFocus = () => fetchBoard(false);
@@ -316,15 +319,7 @@ export function BoardCanvas() {
       window.removeEventListener("focus", onFocus);
       window.clearInterval(id);
     };
-  }, [boardId, navigate, isPublic, loaded]);
-
-  // Check access when loading state changes
-  useEffect(() => {
-    if (!loading && !isPublic && !auth.currentUser) {
-      console.log('[Board] Loading complete - no user and not public, redirecting to boards');
-      navigate("/boards");
-    }
-  }, [loading, isPublic, navigate]);
+  }, [boardId, navigate]);
 
   /* -------------------- Socket shape events (peer updates) -------------------- */
   useEffect(() => {
@@ -350,7 +345,7 @@ export function BoardCanvas() {
 
   /* -------------------- Autosave (shapes) -------------------- */
   useEffect(() => {
-    if (!loaded || !boardId || isPublic) return; // don't save before first fetch, or if no boardId, or if public
+    if (!loaded || !boardId || !canEdit) return; // don't save before first fetch, or if no boardId, or if user can't edit
     const current = JSON.stringify(shapes);
     if (current === lastSavedShapesRef.current) return; // unchanged
 
@@ -377,13 +372,13 @@ export function BoardCanvas() {
           lastSavedShapesRef.current = current; // synced
         }
       } catch {/* ignore */}
-    }, 200); // Reduced from 500ms to 200ms for faster sync
+    }, 100); // Reduced to 100ms for near-instant sync
     return () => clearTimeout(t);
-  }, [shapes, boardId, loaded, navigate, isPublic]);
+  }, [shapes, boardId, loaded, navigate, canEdit]);
 
   /* -------------------- Autosave (name) -------------------- */
   useEffect(() => {
-    if (!loaded || !boardId || isPublic) return;
+    if (!loaded || !boardId || !canEdit) return;
     const trimmed = boardName.trim();
     if (trimmed === serverNameRef.current.trim()) return;
 
@@ -410,17 +405,19 @@ export function BoardCanvas() {
           serverNameRef.current = trimmed || "Untitled document";
         }
       } catch {/* ignore */}
-    }, 300); // Reduced from 500ms to 300ms for faster sync
+    }, 200); // Reduced to 200ms for faster sync
     return () => clearTimeout(t);
-  }, [boardName, boardId, loaded, navigate, isPublic]);
+  }, [boardName, boardId, loaded, navigate, canEdit]);
 
   /* -------------------- Render loop -------------------- */
   const requestNextFrame = () => {
     if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
     animationFrameRef.current = requestAnimationFrame(renderCanvas);
   };
+  
+  // Optimize render triggers - render immediately when loaded, don't wait for all dependencies
   useEffect(() => { 
-    if (loaded) {
+    if (loaded || shapes.length > 0) {
       requestNextFrame(); 
     }
   }, [shapes, selectedId, tool, viewVersion, loaded]);
@@ -601,6 +598,34 @@ export function BoardCanvas() {
     const p = screenToWorld(canvasPoint(e));
     dragStartRef.current = p;
 
+    if (!tool) {
+      // No tool selected - just select shapes (like select tool but simpler)
+      const hit = hitTest(p.x, p.y, shapes);
+      if (hit) {
+        setSelectedId(hit.shape.id);
+        if (!canEdit) {
+          // viewers can select but not mutate
+          resizeHandleRef.current = null;
+          isDraggingRef.current = false;
+          draggedShapeRef.current = null;
+          rotateRef.current = null;
+          return;
+        }
+        resizeHandleRef.current = hit.handle;
+        isDraggingRef.current = true;
+        draggedShapeRef.current = JSON.parse(JSON.stringify(hit.shape)) as Shape;
+
+        if (hit.handle === "rotate" && isRectLike(hit.shape)) {
+          const s = hit.shape as RectLike;
+          const { cx, cy } = getRectCenter(s);
+          rotateRef.current = { cx, cy, startAngle: Math.atan2(p.y - cy, p.x - cx), initialDeg: s.rotation ?? 0 };
+        } else rotateRef.current = null;
+      } else {
+        setSelectedId(null); resizeHandleRef.current = null; isDraggingRef.current = false; draggedShapeRef.current = null; rotateRef.current = null;
+      }
+      return;
+    }
+
     if (tool === "select") {
       const hit = hitTest(p.x, p.y, shapes);
       if (hit) {
@@ -666,7 +691,7 @@ export function BoardCanvas() {
     };
     setShapes((prev) => [...prev, base]);
     setSelectedId(id);
-    if (boardId && !isPublic) {
+    if (boardId && canEdit) {
       socketRef.current?.emit("shape-create", { boardId: boardId, shape: base, user: { uid: auth.currentUser?.uid } });
     }
     setTextEditor({ visible: true, x: p.x, y: p.y, value: "", shapeId: id });
@@ -675,6 +700,50 @@ export function BoardCanvas() {
   function handlePointerMove(e: React.MouseEvent<HTMLCanvasElement>) {
     if (!isPointerDownRef.current) return;
     const p = screenToWorld(canvasPoint(e));
+
+    // Handle dragging when no tool is selected (acts like select tool)
+    if (!tool && isDraggingRef.current && draggedShapeRef.current) {
+      const start = dragStartRef.current!; const dx=p.x-start.x, dy=p.y-start.y; dragStartRef.current = p;
+      let updated: Shape = JSON.parse(JSON.stringify(draggedShapeRef.current)) as Shape;
+
+      if (resizeHandleRef.current) {
+        if (resizeHandleRef.current === "rotate" && isRectLike(updated)) {
+          const rot = rotateRef.current;
+          if (rot) {
+            const angNow = Math.atan2(p.y - rot.cy, p.x - rot.cx);
+            let deltaDeg = radToDeg(angNow - rot.startAngle);
+            let nextDeg = (rot.initialDeg ?? 0) + deltaDeg;
+            if (e.shiftKey) nextDeg = Math.round(nextDeg / 15) * 15;
+            (updated as RectLike).rotation = ((nextDeg % 360) + 360) % 360;
+            draggedShapeRef.current = updated; mutatedDuringDragRef.current = true; requestNextFrame(); return;
+          }
+        }
+        if (isRectLike(updated)) {
+          let { x, y, w, h } = updated;
+          if (nearlyZeroRotation(updated)) {
+            if (resizeHandleRef.current.includes("n")) { const newY = y + dy; h = h - dy; y = newY; }
+            if (resizeHandleRef.current.includes("s")) h = h + dy;
+            if (resizeHandleRef.current.includes("w")) { const newX = x + dx; w = w - dx; x = newX; }
+            if (resizeHandleRef.current.includes("e")) w = w + dx;
+            const norm = normalizeRect({ x, y, w, h }); (updated as RectLike).x = norm.x; (updated as RectLike).y = norm.y; (updated as RectLike).w = norm.w; (updated as RectLike).h = norm.h;
+          }
+        } else if (isLineLike(updated)) {
+          if (resizeHandleRef.current === "start") { (updated as LineLike).x1 += dx; (updated as LineLike).y1 += dy; }
+          else if (resizeHandleRef.current === "end") { (updated as LineLike).x2 += dx; (updated as LineLike).y2 += dy; }
+        }
+      } else {
+        if (isRectLike(updated)) { (updated as RectLike).x += dx; (updated as RectLike).y += dy; }
+        else if (isLineLike(updated)) { (updated as LineLike).x1 += dx; (updated as LineLike).y1 += dy; (updated as LineLike).x2 += dx; (updated as LineLike).y2 += dy; }
+        else if (isFreehand(updated)) {
+          updated.points = updated.points.map((pt) => ({ x: pt.x + dx, y: pt.y + dy }));
+          (updated as Freehand).bbox = { x: (updated as Freehand).bbox.x + dx, y: (updated as Freehand).bbox.y + dy, w: (updated as Freehand).bbox.w, h: (updated as Freehand).bbox.h };
+        }
+      }
+
+      draggedShapeRef.current = updated; mutatedDuringDragRef.current = true; requestNextFrame(); return;
+    }
+
+    if (!tool) return; // No tool selected, no shape creation
 
     if (tool === "freehand" && draftShapeRef.current && isFreehand(draftShapeRef.current)) {
       const d = draftShapeRef.current as Freehand; d.points.push(p); d.bbox = computeBBox(d.points); requestNextFrame(); return;
@@ -738,7 +807,7 @@ export function BoardCanvas() {
     if (draftShapeRef.current && isFreehand(draftShapeRef.current)) {
       const d = draftShapeRef.current as Freehand; d.bbox = computeBBox(d.points);
       setShapes((prev) => [...prev, d]); 
-      if (boardId && !isPublic) {
+      if (boardId && canEdit) {
         socketRef.current?.emit("shape-create",{boardId:boardId,shape:d,user:{uid:auth.currentUser?.uid}});
       }
       draftShapeRef.current=null;
@@ -747,7 +816,7 @@ export function BoardCanvas() {
       const d = draftShapeRef.current as any; let toAdd: Shape = d as Shape;
       if (isRectLike(d)) { const norm = normalizeRect({ x:d.x, y:d.y, w:d.w, h:d.h }); toAdd = { ...(d as RectLike), ...norm } as RectLike; }
       setShapes((prev) => [...prev, toAdd]); 
-      if (boardId && !isPublic) {
+      if (boardId && canEdit) {
         socketRef.current?.emit("shape-create",{boardId:boardId,shape:toAdd,user:{uid:auth.currentUser?.uid}});
       }
       draftShapeRef.current=null;
@@ -758,7 +827,7 @@ export function BoardCanvas() {
       if (orig) {
         setShapes((prev) => prev.map((s) => (s.id === finalShape.id ? finalShape : s)));
         const diff = diffShape(orig, finalShape);
-        if (Object.keys(diff).length > 0 && boardId && !isPublic) {
+        if (Object.keys(diff).length > 0 && boardId && canEdit) {
           socketRef.current?.emit("shape-update", { boardId: boardId, shapeId: finalShape.id, props: diff, user:{uid:auth.currentUser?.uid} });
         }
       }
@@ -809,7 +878,7 @@ export function BoardCanvas() {
     const pasted=cloneForPaste(clip); 
     setShapes(prev=>[...prev,pasted]); 
     setSelectedId(pasted.id); 
-    if (boardId && !isPublic) {
+    if (boardId && canEdit) {
       socketRef.current?.emit("shape-create",{boardId:boardId,shape:pasted,user:{uid:auth.currentUser?.uid}});
     }
   };
@@ -819,7 +888,7 @@ export function BoardCanvas() {
     draggedShapeRef.current=null; 
     setShapes(prev=>prev.filter(s=>s.id!==id)); 
     setSelectedId(null); 
-    if (boardId && !isPublic) {
+    if (boardId && canEdit) {
       socketRef.current?.emit("shape-delete",{boardId:boardId,shapeId:id,user:{uid:auth.currentUser?.uid}});
     }
   };
@@ -879,7 +948,7 @@ export function BoardCanvas() {
 
   return (
     <main>
-      {loading && (
+      {showLoadingOverlay && (
         <div className="fixed inset-0 bg-white bg-opacity-90 flex items-center justify-center z-50">
           <div className="text-center">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-600 mx-auto mb-4"></div>
@@ -938,7 +1007,7 @@ export function BoardCanvas() {
           const sel=shapes.find(s=>s.id===selectedId); if (!sel) return null;
           const updateSel=(props:Partial<Shape>)=>{
             setShapes(prev=>prev.map(s=>s.id===selectedId? ({...s, ...props} as Shape) : s));
-            if (boardId && !isPublic) {
+            if (boardId && canEdit) {
               socketRef.current?.emit("shape-update",{boardId:boardId,shapeId:selectedId,props,user:{uid:auth.currentUser?.uid}});
             }
           };
@@ -984,7 +1053,7 @@ export function BoardCanvas() {
             onMouseMove={handlePointerMove}
             onMouseUp={handlePointerUp}
             onMouseLeave={handlePointerUp}
-            style={{ width:"100%", height:"100%", display:"block", cursor: tool==="select" ? "default" : "crosshair", background:"transparent" }}
+            style={{ width:"100%", height:"100%", display:"block", cursor: !tool || tool==="select" ? "default" : "crosshair", background:"transparent" }}
           />
           {shareOpen && (
             <div style={{ position:"absolute", inset:0, background:"#0006", display:"grid", placeItems:"center" }} onClick={()=> setShareOpen(false)}>
@@ -1200,7 +1269,7 @@ export function BoardCanvas() {
     if (!value.trim()) {
       const next = shapes.filter((s) => s.id !== shape.id);
       setShapes(next);
-      if (boardId && !isPublic) {
+      if (boardId && canEdit) {
         socketRef.current?.emit("shape-delete", { boardId: boardId, shapeId: shape.id });
       }
       setTextEditor({ visible:false, x:0, y:0, value:"", shapeId:null });
@@ -1209,7 +1278,7 @@ export function BoardCanvas() {
     const dim = measureText(value, shape.fontSize, shape.fontFamily);
     const next: TextShape = { ...shape, text:value, w:dim.width, h:dim.height };
     setShapes((prev) => prev.map((s) => (s.id === shape.id ? next : s)));
-            if (boardId && !isPublic) {
+            if (boardId && canEdit) {
           socketRef.current?.emit("shape-update", { boardId: boardId, shapeId: shape.id, props: { text: next.text, w: next.w, h: next.h }, user:{uid:auth.currentUser?.uid} });
         }
     setTextEditor({ visible:false, x:0, y:0, value:"", shapeId:null });

@@ -5,13 +5,45 @@ const { verifyFirebase } = require('../middleware/auth');
 
 const router = express.Router();
 
-// Apply auth middleware to all routes EXCEPT the main board route (which handles public access)
-router.use((req, res, next) => {
-  // Skip auth for GET /:id (main board route) - it handles auth internally
-  if (req.method === 'GET' && req.path.match(/^\/[^\/]+$/)) {
-    return next();
+// Optional auth middleware that sets req.user if valid auth is present
+const optionalAuth = async (req, res, next) => {
+  try {
+    const hdr = req.get('Authorization') || '';
+    const bearer = hdr.startsWith('Bearer ') ? hdr.slice(7) : null;
+    const sessionCookie = req.cookies && req.cookies.__session;
+
+    if (sessionCookie || bearer) {
+      const admin = require('../firebaseAdmin');
+      let decoded = null;
+      if (sessionCookie) {
+        decoded = await admin.auth().verifySessionCookie(sessionCookie);
+      } else if (bearer) {
+        decoded = await admin.auth().verifyIdToken(bearer);
+      }
+      if (decoded) {
+        req.user = {
+          uid: decoded.uid,
+          email: decoded.email || '',
+          name: decoded.name || '',
+          picture: decoded.picture || '',
+          claims: decoded,
+        };
+      }
+    }
+    next();
+  } catch (e) {
+    // Ignore auth errors for optional auth, just continue without user
+    next();
   }
-  // Apply auth to all other routes
+};
+
+// Apply auth middleware to all routes EXCEPT the main board route (which uses optional auth)
+router.use((req, res, next) => {
+  // Use optional auth for GET /:id (main board route) - it handles public access
+  if (req.method === 'GET' && req.path.match(/^\/[^\/]+$/)) {
+    return optionalAuth(req, res, next);
+  }
+  // Apply required auth to all other routes
   return verifyFirebase(req, res, next);
 });
 
@@ -64,9 +96,28 @@ router.get('/:id', async (req, res) => {
       return res.status(404).json({ message: 'Board not found' });
     }
     
+    // Check if user is authenticated
+    const isOwner = req.user && board.ownerId === req.user.uid;
+    const isCollaborator = req.user && board.collaborators?.some(c => 
+      (c.uid && c.uid === req.user.uid) || 
+      (c.email && c.email.toLowerCase() === req.user.email?.toLowerCase())
+    );
+    
+    // If user is owner or collaborator, always return full board data
+    if (isOwner || isCollaborator) {
+      return res.json({
+        ...board,
+        userRole: isOwner ? 'owner' : 
+          board.collaborators?.find(c => 
+            (c.uid && c.uid === req.user.uid) || 
+            (c.email && c.email.toLowerCase() === req.user.email?.toLowerCase())
+          )?.role || 'viewer'
+      });
+    }
+    
     // Check if board has public access enabled
     if (board.publicAccess?.enabled) {
-      // Public board - return with limited data (no owner info, no collaborators)
+      // Public board - return with limited data and public role
       const publicBoard = {
         _id: board._id,
         name: board.name,
@@ -75,30 +126,18 @@ router.get('/:id', async (req, res) => {
         shapes: board.shapes,
         updatedAt: board.updatedAt,
         createdAt: board.createdAt,
-        isPublic: true
+        isPublic: true,
+        userRole: board.publicAccess.role || 'viewer'
       };
       return res.json(publicBoard);
     }
     
-    // Private board - require authentication
+    // Private board without access
     if (!req.user) {
       return res.status(401).json({ message: 'Authentication required' });
     }
     
-    // Check if user has access (owner or collaborator)
-    const hasAccess = 
-      board.ownerId === req.user.uid ||
-      board.collaborators?.some(c => 
-        (c.uid && c.uid === req.user.uid) || 
-        (c.email && c.email.toLowerCase() === req.user.email?.toLowerCase())
-      );
-    
-    if (!hasAccess) {
-      return res.status(403).json({ message: 'Access denied' });
-    }
-    
-    // Return full board data for authenticated users
-    return res.json(board);
+    return res.status(403).json({ message: 'Access denied' });
   } catch (e) {
     return res.status(500).json({ message: 'Failed to fetch board', error: e.message });
   }
