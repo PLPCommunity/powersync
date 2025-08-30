@@ -8,6 +8,7 @@ import { auth, gitProvider, provider } from "../utils/firebase";
 import { useDispatch, useSelector } from "react-redux";
 import { login, logout, selectUser } from "../features/userSlice";
 // import GitHubIcon from "@mui/icons-material/GitHub";
+// import GitHubIcon from "@mui/icons-material/GitHub";
 import { useNavigate } from "react-router-dom";
 import { ArrowRight } from "lucide-react";
 
@@ -63,13 +64,11 @@ const Login = () => {
   useEffect(() => {
     const unsubscribe = auth.onAuthStateChanged(async (userAuth) => {
       if (userAuth) {
-        // const role = await fetchUserRole(userAuth);
         dispatch(
           login({
             email: userAuth.email,
             uid: userAuth.uid,
             displayName: userAuth.displayName,
-            // role: role, // Include role in the payload
           })
         );
       } else {
@@ -108,7 +107,7 @@ const Login = () => {
                 data-hs-overlay="#hs-static-backdrop-modal"
                 onClick={() => window.location.reload()}
               >
-                {/* <CloseOutlinedIcon className="w-20" /> */}X
+                {/* <CloseOutlinedIcon className="w-20" /> */} X
               </button>
             </div>
 

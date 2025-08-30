@@ -26,6 +26,8 @@ function LayoutNoHeader() {
 }
 
 export default function App() {
+  console.log('[App] Rendering App component');
+  
   return (
     <Routes>
       <Route element={<LayoutWithHeader />}>

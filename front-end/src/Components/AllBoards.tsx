@@ -15,7 +15,7 @@ import {
 
 // Your compat firebase export (unchanged file you showed)
 import { auth } from "../utils/firebase";
-import Login from "../Components/Login";
+import Login from "./Login";
 
 /* ----------------------------- Types & Config ----------------------------- */
 
@@ -25,6 +25,12 @@ type Board = {
   description?: string;
   createdAt?: string;
   updatedAt?: string;
+};
+
+type User = {
+  uid: string;
+  email: string;
+  displayName?: string;
 };
 
 const API_BASE =
@@ -73,7 +79,7 @@ function fmtDate(s?: string) {
 
 export default function AllBoards() {
   const navigate = useNavigate();
-  const [user, setUser] = useState<any>(auth.currentUser);
+  const [user, setUser] = useState<User | null>(auth.currentUser);
   const [boards, setBoards] = useState<Board[]>([]);
   const [loading, setLoading] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
@@ -82,7 +88,9 @@ export default function AllBoards() {
 
   // Keep local user state in sync
   useEffect(() => {
-    const unsub = auth.onAuthStateChanged(async (u) => {
+    console.log('[AllBoards] Setting up auth listener');
+    const unsub = auth.onAuthStateChanged(async (u: User | null) => {
+      console.log('[AllBoards] Auth state changed:', u ? 'User authenticated' : 'No user');
       setUser(u);
       if (!u) {
         setBoards([]);
@@ -93,12 +101,15 @@ export default function AllBoards() {
       }
       // with a user: ensure cookie, sync profile, then load boards
       try {
+        console.log('[AllBoards] Ensuring session for user:', u.email);
         await ensureSession();
         await api("/api/users/sync", { method: "POST" }); // upsert profile
-      } catch {
+      } catch (error) {
+        console.log('[AllBoards] Error in session/user sync:', error);
         /* ignore */
       }
       try {
+        console.log('[AllBoards] Fetching boards for user');
         const r = await api("/api/boards");
         const data = await r.json();
         setBoards(Array.isArray(data) ? data : []);

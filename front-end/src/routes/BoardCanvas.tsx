@@ -96,6 +96,7 @@ export function BoardCanvas() {
   const [shapes, setShapes] = useState<Shape[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false); // <-- gate autosaves until data is fetched
+  const [loading, setLoading] = useState(true); // <-- track initial loading state
   const [collaborators, setCollaborators] = useState<Collaborator[]>([]);
   const [publicAccess, setPublicAccess] = useState<PublicAccess>({ enabled: false, role: "viewer" });
   const [shareOpen, setShareOpen] = useState(false);
@@ -168,18 +169,31 @@ export function BoardCanvas() {
       const endpoint = `/api/boards/${boardId}`;
       console.log('[Board] Fetching from:', endpoint);
       
+      // First try to ensure session if user is authenticated
+      const u = auth.currentUser;
+      if (u) {
+        await ensureSession();
+      }
+      
       const res = await fetch(`${API_BASE}${endpoint}`, {
         method: "GET",
         credentials: "include", // Always include credentials, the backend will handle public access
       });
       
       if (res.status === 401) {
-        navigate("/boards");
-        return;
+        // Only redirect if user is authenticated but still getting 401
+        // This means they don't have access to this board
+        if (u) {
+          console.log('[Board] User authenticated but unauthorized, redirecting to boards');
+          navigate("/boards");
+          return;
+        }
+        // If no user, this might be a public board, continue to check
       }
       
       if (!res.ok) {
         console.error('[Board] Failed to fetch:', res.status, res.statusText);
+        setLoading(false);
         return;
       }
       
@@ -219,8 +233,10 @@ export function BoardCanvas() {
       }
       
       setLoaded(true); // <-- allow autosaves after first load
+      setLoading(false); // <-- mark initial loading as complete
     } catch (error) {
       console.error('[Board] Error fetching board:', error);
+      setLoading(false);
     } finally {
       loadingRef.current = false;
     }
@@ -229,6 +245,8 @@ export function BoardCanvas() {
   /* -------------------- Init / sockets / first load -------------------- */
   useEffect(() => {
     let mounted = true;
+    console.log('[Board] Initializing BoardCanvas for board:', boardId);
+    
     socketRef.current = io(API_BASE, { transports: ["websocket"] });
 
     let unsub: (() => void) | undefined;
@@ -240,36 +258,57 @@ export function BoardCanvas() {
     unsub = auth.onAuthStateChanged(async (u: any) => {
       if (!mounted) return;
       
+      console.log('[Board] Auth state changed:', u ? 'User authenticated' : 'No user');
+      
       if (!u) {
-        // No user - check if board is public, if not redirect
-        if (!isPublic) {
-          navigate("/boards");
-        }
+        // No user - wait for board to load first, then check if it's public
+        // Don't redirect immediately, give the board fetch a chance to succeed
+        console.log('[Board] No user, waiting for board to load before deciding on redirect');
         return;
       }
       
       // User is authenticated - ensure session and join board
+      console.log('[Board] Ensuring session for user:', u.email);
       const ok = await ensureSession();
       if (!ok) { 
+        console.log('[Board] Failed to ensure session, redirecting to boards');
         navigate("/boards"); 
         return; 
       }
       
+      console.log('[Board] Session ensured successfully, joining board');
+      
       try {
         await fetch(`${API_BASE}/api/boards/${boardId}/accept`, { method: "POST", credentials: "include" });
-      } catch {}
+      } catch (error) {
+        console.log('[Board] Failed to accept board invitation:', error);
+      }
       
       if (boardId) {
         socketRef.current?.emit("join-board", { boardId: boardId, userId: u?.uid, userName: u?.displayName });
       }
     });
 
+    // Check for unauthorized access after board loads
+    const checkAccess = () => {
+      if (mounted && !loading && !isPublic && !auth.currentUser) {
+        console.log('[Board] Board loaded but no user and not public, redirecting to boards');
+        navigate("/boards");
+      }
+    };
+
+    // Check access when loading completes
+    if (!loading) {
+      checkAccess();
+    }
+    
     // refresh when focus returns (if not dirty) + background poll
     const onFocus = () => fetchBoard(false);
     const id = window.setInterval(() => fetchBoard(false), 30000);
 
     window.addEventListener("focus", onFocus);
     return () => {
+      console.log('[Board] Cleaning up BoardCanvas');
       mounted = false;
       socketRef.current?.disconnect();
       socketRef.current = null;
@@ -277,7 +316,15 @@ export function BoardCanvas() {
       window.removeEventListener("focus", onFocus);
       window.clearInterval(id);
     };
-  }, [boardId, navigate, isPublic]);
+  }, [boardId, navigate, isPublic, loaded]);
+
+  // Check access when loading state changes
+  useEffect(() => {
+    if (!loading && !isPublic && !auth.currentUser) {
+      console.log('[Board] Loading complete - no user and not public, redirecting to boards');
+      navigate("/boards");
+    }
+  }, [loading, isPublic, navigate]);
 
   /* -------------------- Socket shape events (peer updates) -------------------- */
   useEffect(() => {
@@ -309,13 +356,23 @@ export function BoardCanvas() {
 
     const t = setTimeout(async () => {
       try {
+        // Ensure session before autosaving
+        const u = auth.currentUser;
+        if (u) {
+          await ensureSession();
+        }
+        
         const r = await fetch(`${API_BASE}/api/boards/${boardId}/shapes`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           credentials: "include",
           body: JSON.stringify({ shapes }),
         });
-        if (r.status === 401) { navigate("/boards"); return; }
+        if (r.status === 401) { 
+          // Don't redirect immediately, just log the issue
+          console.log('[Board] Autosave failed - unauthorized, will retry later');
+          return; 
+        }
         if (r.ok) {
           lastSavedShapesRef.current = current; // synced
         }
@@ -332,13 +389,23 @@ export function BoardCanvas() {
 
     const t = setTimeout(async () => {
       try {
+        // Ensure session before autosaving
+        const u = auth.currentUser;
+        if (u) {
+          await ensureSession();
+        }
+        
         const r = await fetch(`${API_BASE}/api/boards/${boardId}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           credentials: "include",
           body: JSON.stringify({ name: trimmed || "Untitled document" }),
         });
-        if (r.status === 401) { navigate("/boards"); return; }
+        if (r.status === 401) { 
+          // Don't redirect immediately, just log the issue
+          console.log('[Board] Name autosave failed - unauthorized, will retry later');
+          return; 
+        }
         if (r.ok) {
           serverNameRef.current = trimmed || "Untitled document";
         }
@@ -812,6 +879,14 @@ export function BoardCanvas() {
 
   return (
     <main>
+      {loading && (
+        <div className="fixed inset-0 bg-white bg-opacity-90 flex items-center justify-center z-50">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-600 mx-auto mb-4"></div>
+            <p className="text-lg font-semibold text-gray-700">Loading board...</p>
+          </div>
+        </div>
+      )}
       <div style={{ width:"100vw", height:"100vh", display:"flex", flexDirection:"column" }}>
         <div className="flex justify-between py-2 px-5 bg-green-200">
           <button className="hover:bg-pink-600 px-4 rounded-md hover:text-white font-bold" onClick={()=>navigate("/boards")} style={{ cursor:"pointer" }}>← Back</button>

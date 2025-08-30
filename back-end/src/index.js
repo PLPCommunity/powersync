@@ -13,6 +13,7 @@ const Board = require('./models/Board');
 const admin = require('./firebaseAdmin'); // your existing admin init
 const boardsRouter = require('./routes/boards');
 const usersRouter = require('./routes/users');
+const { verifyFirebase } = require('./middleware/auth');
 
 const app = express();
 const srv = http.createServer(app);
@@ -42,90 +43,32 @@ mongoose
 // --- Health ---
 app.get('/api/ping', (req, res) => res.json({ msg: 'pong' }));
 
-// --- Test endpoints for debugging ---
-app.get('/api/test/public-boards', async (req, res) => {
-  try {
-    const boards = await Board.find({ 'publicAccess.enabled': true })
-      .select('name _id publicAccess.role')
-      .lean();
-    
-    res.json({
-      message: 'Public boards found',
-      count: boards.length,
-      boards: boards.map(b => ({
-        name: b.name,
-        boardId: b._id,
-        role: b.publicAccess?.role,
-        publicUrl: `${req.protocol}://${req.get('host')}/board/${b._id}`
-      }))
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.get('/api/test/boards-count', async (req, res) => {
-  try {
-    const totalBoards = await Board.countDocuments();
-    const publicBoards = await Board.countDocuments({ 'publicAccess.enabled': true });
-    const privateBoards = totalBoards - publicBoards;
-    
-    res.json({
-      total: totalBoards,
-      public: publicBoards,
-      private: privateBoards
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// --- Session cookie routes (Firebase Session Cookies) ---
+// --- Firebase session cookie auth ---
 function baseCookieOptions() {
   const isProd = process.env.NODE_ENV === 'production';
   return {
     httpOnly: true,
-    secure: isProd,       // HTTPS in prod
+    secure: isProd,
     sameSite: 'lax',
     path: '/',
   };
 }
 
-// app.post('/api/sessionLogin', async (req, res) => {
-//   try {
-//     const { idToken } = req.body || {};
-//     if (!idToken) return res.status(400).json({ message: 'idToken is required' });
-
-//     // Optional: verify to fail fast
-//     await admin.auth().verifyIdToken(idToken);
-
-//     const expiresIn = 5 * 24 * 60 * 60 * 1000; // 5 days
-//     const sessionCookie = await admin.auth().createSessionCookie(idToken, { expiresIn });
-//     res.cookie(SESSION_COOKIE_NAME, sessionCookie, { ...baseCookieOptions(), maxAge: expiresIn });
-//     return res.json({ ok: true });
-//   } catch (e) {
-//     return res.status(401).json({ message: 'Invalid idToken', error: e.message });
-//   }
-// });
 app.post('/api/sessionLogin', async (req, res) => {
   try {
     const { idToken } = req.body || {};
     if (!idToken) return res.status(400).json({ message: 'idToken is required' });
 
-    // This throws with a detailed reason if invalid
     const decoded = await admin.auth().verifyIdToken(idToken);
-    console.log('Decoded token OK:', { uid: decoded.uid, aud: decoded.aud, iss: decoded.iss });
-
     const expiresIn = 5 * 24 * 60 * 60 * 1000;
     const sessionCookie = await admin.auth().createSessionCookie(idToken, { expiresIn });
-    res.cookie('__session', sessionCookie, { ...baseCookieOptions(), maxAge: expiresIn });
+    res.cookie(SESSION_COOKIE_NAME, sessionCookie, { ...baseCookieOptions(), maxAge: expiresIn });
     return res.json({ ok: true });
   } catch (e) {
     console.error('sessionLogin failed:', e.message);
     return res.status(401).json({ message: 'Invalid idToken', error: e.message });
   }
 });
-
 
 app.post('/api/sessionLogout', async (req, res) => {
   res.clearCookie(SESSION_COOKIE_NAME, { ...baseCookieOptions(), maxAge: 0 });
@@ -136,7 +79,19 @@ app.post('/api/sessionLogout', async (req, res) => {
 app.use('/api/boards', boardsRouter);
 app.use('/api/users', usersRouter);
 
-// --- Socket.io collaboration (unchanged logic) ---
+// --- Socket.io collaboration ---
+io.use(async (socket, next) => {
+  try {
+    const token = socket.handshake.auth.token;
+    if (!token) return next(new Error('Authentication error'));
+    const decoded = await admin.auth().verifySessionCookie(token, true);
+    socket.user = decoded;
+    next();
+  } catch (e) {
+    next(new Error('Authentication error'));
+  }
+});
+
 io.on('connection', (socket) => {
   console.log('🟢 Socket connected:', socket.id);
 
@@ -154,20 +109,19 @@ io.on('connection', (socket) => {
       if (!data || !data.boardId || !data.shape) return;
       const board = await Board.findById(data.boardId).select('ownerId collaborators');
       if (!board) return;
-      const uid = data.user?.uid || '';
+      const uid = socket.user.uid;
       const isOwner = uid && String(board.ownerId) === uid;
       const isEditor = (board.collaborators || []).some((c) => (c.uid === uid) && c.role === 'editor');
       if (!isOwner && !isEditor) return;
-      // annotate shape with audit fields if missing
       const shape = {
         ...data.shape,
-        _createdBy: data.user?.uid || '',
+        _createdBy: uid,
         _createdAt: new Date().toISOString(),
-        _updatedBy: data.user?.uid || '',
+        _updatedBy: uid,
         _updatedAt: new Date().toISOString(),
       };
       await Board.updateOne({ _id: data.boardId }, { $push: { shapes: shape } });
-      io.to(data.boardId).emit('shape-created', { shape: data.shape });
+      io.to(data.boardId).emit('shape-created', { shape: shape });
     } catch (e) {
       console.error('shape-create error:', e.message);
     }
@@ -178,12 +132,12 @@ io.on('connection', (socket) => {
       if (!data || !data.boardId || !data.shapeId) return;
       const board = await Board.findById(data.boardId).select('ownerId collaborators');
       if (!board) return;
-      const uid = data.user?.uid || '';
+      const uid = socket.user.uid;
       const isOwner = uid && String(board.ownerId) === uid;
       const isEditor = (board.collaborators || []).some((c) => (c.uid === uid) && c.role === 'editor');
       if (!isOwner && !isEditor) return;
       const props = data.props || {};
-      const set = { 'shapes.$[elem]._updatedBy': data.user?.uid || '', 'shapes.$[elem]._updatedAt': new Date().toISOString() };
+      const set = { 'shapes.$[elem]._updatedBy': uid, 'shapes.$[elem]._updatedAt': new Date().toISOString() };
       Object.keys(props).forEach((k) => (set[`shapes.$[elem].${k}`] = props[k]));
       if (Object.keys(set).length) {
         await Board.updateOne(
@@ -203,7 +157,7 @@ io.on('connection', (socket) => {
       if (!data || !data.boardId || !data.shapeId) return;
       const board = await Board.findById(data.boardId).select('ownerId collaborators');
       if (!board) return;
-      const uid = data.user?.uid || '';
+      const uid = socket.user.uid;
       const isOwner = uid && String(board.ownerId) === uid;
       const isEditor = (board.collaborators || []).some((c) => (c.uid === uid) && c.role === 'editor');
       if (!isOwner && !isEditor) return;
